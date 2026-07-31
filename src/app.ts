@@ -18,7 +18,7 @@ function renderHeader(): string {
   return `
     <header class="site-header">
       <a class="brand" href="/" data-nav>
-        <img src="/logo.svg" alt="CIFS" width="36" height="36" decoding="async" />
+        <img src="/logo.png" alt="CIFS" class="logo-img" decoding="async" />
         <span>CIFS Support</span>
       </a>
       <nav class="site-nav" aria-label="Primary">

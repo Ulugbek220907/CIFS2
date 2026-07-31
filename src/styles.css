@@ -473,23 +473,33 @@ button {
 
 .option {
   text-align: left;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: 1.1rem;
   padding: 0.95rem 1rem;
   background: #fff;
   color: var(--text-dark);
   box-shadow: none;
+  transition: all 0.15s ease;
+  font-weight: 500;
+  cursor: pointer;
 }
 
 .option:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(79, 70, 229, 0.3);
-  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);
+  background: rgba(79, 70, 229, 0.02);
+}
+
+.option:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .option.selected {
-  border-color: rgba(79, 70, 229, 0.45);
-  box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.11);
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.08);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+  font-weight: 600;
 }
 
 .option.correct,
