@@ -19,7 +19,7 @@ function renderHeader(): string {
     <header class="site-header">
       <a class="brand" href="/" data-nav>
         <img src="/logo.svg" alt="CIFS" width="36" height="36" decoding="async" />
-        <span>CIFS</span>
+        <span>CIFS Support</span>
       </a>
       <nav class="site-nav" aria-label="Primary">
         <a href="/" data-nav ${window.location.pathname === '/' ? 'aria-current="page"' : ''}>Home</a>
@@ -29,12 +29,35 @@ function renderHeader(): string {
   `;
 }
 
+function renderBanner(): string {
+  return `
+    <section class="leadership-banner">
+      <div class="banner-content">
+        <span class="leader-badge">Leader</span>
+        <span class="leader-name">Founder & Leader: Rustam Fayzullayev</span>
+      </div>
+    </section>
+  `;
+}
+
 function renderHome(): string {
   return `
-    <section class="home-shell panel">
-      <p class="home-motto">Just Practice</p>
-      <a class="button primary" href="/quiz" data-nav>Start quiz</a>
+    <section class="home-hero">
+      <h1>Welcome to CIFS Support quizium</h1>
+      <a class="cta-btn" href="/quiz" data-nav>
+        Explore Quizzes <span aria-hidden="true">→</span>
+      </a>
     </section>
+  `;
+}
+
+function renderFooter(): string {
+  return `
+    <footer class="site-footer">
+      <div class="footer-credit">
+        Developer & Technical Support: <span>Ulug'bek Isoqov</span>
+      </div>
+    </footer>
   `;
 }
 
@@ -45,11 +68,11 @@ function renderShell(content: string): void {
 
   mountedRoot.innerHTML = `
     ${renderHeader()}
-    <main class="app-main">
-      <div class="app-frame">
-        <div id="view">${content}</div>
-      </div>
+    ${renderBanner()}
+    <main class="main-container">
+      <div id="view" class="tab-view active">${content}</div>
     </main>
+    ${renderFooter()}
   `;
 }
 

@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
-import { clearNode, createEl, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
+import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
 import { difficulties, passPercent, quizDurationSeconds, quizLength, subjects } from './constants';
-import { readSession, removeSession, writeSession } from './storage';
+import { readSession, writeSession } from './storage';
 import type { AnswerReview, Difficulty, Question, ResultRow, Subject } from './types';
 
 interface QuizHistoryItem extends ResultRow {}
@@ -16,6 +16,7 @@ type QuizPhase = 'setup' | 'loading' | 'question' | 'review' | 'results' | 'erro
 interface QuizState {
   phase: QuizPhase;
   config: QuizConfig | null;
+  selectedSubject: Subject | null;
   userId: string | null;
   questions: Question[];
   currentIndex: number;
@@ -40,6 +41,23 @@ function defaultConfig(): QuizConfig {
     subject: subjects[0],
     difficulty: difficulties[0],
   };
+}
+
+function subjectShortName(subject: Subject): string {
+  switch (subject) {
+    case 'Quantitative Methods':
+      return 'QM';
+    case 'Academic Communication Skills':
+      return 'ACS';
+    case 'Professional Skills & Employability':
+      return 'PSE';
+    case 'Critical Thinking & Citizenship':
+      return 'CTC';
+    case 'Foundations of Economics':
+      return 'FoE';
+    case 'Understanding Finance':
+      return 'UF';
+  }
 }
 
 function getQuestionCacheKey(subject: Subject, difficulty: Difficulty): string {
@@ -132,6 +150,7 @@ export class QuizApp {
     this.state = {
       phase: 'setup',
       config: loadConfig(),
+      selectedSubject: null,
       userId: null,
       questions: [],
       currentIndex: 0,
@@ -193,33 +212,44 @@ export class QuizApp {
 
   private renderSetup(): string {
     const config = this.state.config ?? defaultConfig();
+    const activeSubject = this.state.selectedSubject;
     return `
-      <section class="quiz-setup-shell">
-        <form id="quiz-setup" class="quiz-card-centered setup-form">
-          <label>
-            <span>Subject</span>
-            <select name="subject" required>
-              ${subjects
-                .map(
-                  (subject) =>
-                    `<option value="${escapeHtml(subject)}" ${subject === config.subject ? 'selected' : ''}>${escapeHtml(subject)}</option>`,
-                )
-                .join('')}
-            </select>
-          </label>
-          <label>
-            <span>Difficulty</span>
-            <select name="difficulty" required>
-              ${difficulties
-                .map(
-                  (difficulty) =>
-                    `<option value="${difficulty}" ${difficulty === config.difficulty ? 'selected' : ''}>${difficulty}</option>`,
-                )
-                .join('')}
-            </select>
-          </label>
-          <button class="button primary" type="submit">Launch quiz</button>
-        </form>
+      <section class="quiz-flow">
+        <section id="subject-selection-step" class="subject-step ${activeSubject ? 'is-hidden' : ''}">
+          <nav class="level-nav" aria-label="Quiz levels">
+            <button class="level-tab active" type="button">CIFS</button>
+            <button class="level-tab locked" type="button" disabled>Level 4 🔒</button>
+            <button class="level-tab locked" type="button" disabled>Level 5 🔒</button>
+            <button class="level-tab locked" type="button" disabled>Level 6 🔒</button>
+          </nav>
+          <div class="subjects-grid">
+            ${subjects
+              .map(
+                (subject) => `
+                  <button class="subject-card" type="button" data-action="subject-select" data-subject="${escapeHtml(subject)}">
+                    ${escapeHtml(subjectShortName(subject))}
+                  </button>
+                `,
+              )
+              .join('')}
+          </div>
+        </section>
+
+        <section id="difficulty-step" class="difficulty-step ${activeSubject ? 'is-active' : ''}">
+          <button class="back-link" type="button" data-action="back-subjects">← Choose Another Subject</button>
+          <div class="selected-subject-header" id="active-subject-title">${escapeHtml(activeSubject ?? config.subject)}</div>
+          <div class="difficulty-options">
+            ${difficulties
+              .map(
+                (difficulty) => `
+                  <button class="difficulty-btn ${difficulty.toLowerCase()}" type="button" data-action="difficulty-select" data-difficulty="${difficulty}">
+                    ${difficulty}
+                  </button>
+                `,
+              )
+              .join('')}
+          </div>
+        </section>
       </section>
     `;
   }
@@ -367,6 +397,38 @@ export class QuizApp {
 
     const action = actionButton.dataset.action;
 
+    if (action === 'subject-select') {
+      const subject = actionButton.dataset.subject as Subject | undefined;
+      if (!subject) {
+        return;
+      }
+
+      this.setState({
+        selectedSubject: subject,
+        config: {
+          subject,
+          difficulty: this.state.config?.difficulty ?? difficulties[0],
+        },
+      });
+      return;
+    }
+
+    if (action === 'back-subjects') {
+      this.setState({ selectedSubject: null });
+      return;
+    }
+
+    if (action === 'difficulty-select') {
+      const difficulty = actionButton.dataset.difficulty as Difficulty | undefined;
+      if (!difficulty) {
+        return;
+      }
+
+      const subject = this.state.selectedSubject ?? this.state.config?.subject ?? defaultConfig().subject;
+      void this.startQuiz({ subject, difficulty });
+      return;
+    }
+
     if (action === 'submit-answer') {
       void this.submitAnswer();
       return;
@@ -391,6 +453,7 @@ export class QuizApp {
       this.stopTimer();
       this.setState({
         phase: 'setup',
+        selectedSubject: null,
         questions: [],
         currentIndex: 0,
         selectedIndex: null,
@@ -431,6 +494,7 @@ export class QuizApp {
     this.setState({
       phase: 'loading',
       config,
+      selectedSubject: null,
       error: null,
       busy: true,
       history: [],
@@ -511,6 +575,7 @@ export class QuizApp {
     this.stopTimer();
     this.setState({
       phase: 'setup',
+      selectedSubject: null,
       questions: [],
       currentIndex: 0,
       selectedIndex: null,

@@ -135,7 +135,7 @@ export function bootAdmin(root: HTMLElement): void {
           <article class="panel admin-login-panel">
             <div class="eyebrow">Private access</div>
             <h1>Admin sign-in</h1>
-            <p class="subtle">Only pre-created Supabase accounts can log in. Anonymous sessions and public visitors stay on the login form.</p>
+            <p class="subtle">Only pre-created Supabase accounts can log in. Public visitors stay on this form.</p>
             <form id="admin-login" class="admin-form">
               <label>
                 <span>Email</span>
@@ -159,6 +159,8 @@ export function bootAdmin(root: HTMLElement): void {
       const difficultyMatch = state.filterDifficulty === 'All' || question.difficulty === state.filterDifficulty;
       return subjectMatch && difficultyMatch;
     });
+    const totalQuestions = state.questions.length;
+    const visibleCount = visibleQuestions.length;
 
     root.innerHTML = `
       <section class="admin-shell">
@@ -166,16 +168,37 @@ export function bootAdmin(root: HTMLElement): void {
           <div>
             <div class="eyebrow">Admin</div>
             <h1>Question bank</h1>
+            <p class="subtle">Create, filter, edit, and remove questions in one place.</p>
           </div>
           <div class="admin-session">
-            <span>${escapeHtml(state.userEmail ?? '')}</span>
+            <span class="admin-user">${escapeHtml(state.userEmail ?? '')}</span>
             <button class="button ghost" type="button" data-action="sign-out">Sign out</button>
           </div>
         </header>
 
+        <section class="admin-stats">
+          <article class="panel admin-stat-card">
+            <span class="subtle">Total questions</span>
+            <strong>${totalQuestions}</strong>
+          </article>
+          <article class="panel admin-stat-card">
+            <span class="subtle">Visible questions</span>
+            <strong>${visibleCount}</strong>
+          </article>
+          <article class="panel admin-stat-card">
+            <span class="subtle">Filters</span>
+            <strong>${escapeHtml(state.filterSubject)} / ${escapeHtml(state.filterDifficulty)}</strong>
+          </article>
+        </section>
+
         <section class="grid two-up admin-grid">
-          <article class="panel">
-            <h2>${state.editingId ? 'Edit question' : 'Add question'}</h2>
+          <article class="panel admin-form-panel">
+            <div class="admin-panel-head">
+              <div>
+                <div class="eyebrow">Question editor</div>
+                <h2>${state.editingId ? 'Edit question' : 'Add question'}</h2>
+              </div>
+            </div>
             <form id="question-form" class="admin-form compact" data-mode="${state.editingId ? 'edit' : 'add'}">
               <div class="field-grid">
                 <label>
@@ -224,9 +247,12 @@ export function bootAdmin(root: HTMLElement): void {
             </form>
           </article>
 
-          <article class="panel">
-            <div class="list-toolbar">
-              <h2>Questions</h2>
+          <article class="panel admin-list-panel">
+            <div class="admin-panel-head admin-list-head">
+              <div>
+                <div class="eyebrow">Question library</div>
+                <h2>Questions</h2>
+              </div>
               <div class="filter-row">
                 <select id="filter-subject" aria-label="Filter by subject">
                   <option value="All">All subjects</option>
