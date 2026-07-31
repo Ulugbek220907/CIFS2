@@ -1,0 +1,470 @@
+:root {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --panel-muted: #f1f5f9;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+  --primary: #0f172a;
+  --primary-hover: #1e293b;
+  --danger: #ef4444;
+  --danger-bg: #fef2f2;
+  --success: #10b981;
+  --success-bg: #ecfdf5;
+
+  --max-width: 1040px;
+  --radius-sm: 0.375rem;
+  --radius: 0.5rem;
+  --radius-lg: 0.85rem;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow: 0 4px 12px -2px rgb(0 0 0 / 0.08);
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* ==========================================================================
+   Header & Segmented Pill Navigation
+   ========================================================================== */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.brand {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: 1.1rem;
+}
+
+.brand img {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  width: 2rem;
+  height: 2rem;
+  object-fit: cover;
+}
+
+.site-nav {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--panel-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.site-nav a {
+  min-width: 4.5rem;
+  padding: 0.4rem 0.85rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: all 0.15s ease;
+}
+
+.site-nav a:hover {
+  color: var(--ink);
+}
+
+.site-nav a[aria-current='page'] {
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ==========================================================================
+   Layout Containers
+   ========================================================================== */
+.app-main {
+  padding: 2rem 1rem 4rem;
+}
+
+.app-frame {
+  width: min(var(--max-width), calc(100vw - 2rem));
+  margin: 0 auto;
+}
+
+/* Modern Card Component */
+.panel,
+.question-row,
+.question-card,
+.result-hero,
+.history-item,
+.question-chip,
+.question-list article,
+.admin-login-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel,
+.question-card,
+.admin-login-panel {
+  padding: 1.75rem;
+}
+
+/* ==========================================================================
+   Home View (No outer wrapper box)
+   ========================================================================== */
+.home-shell {
+  min-height: calc(100vh - 12rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.75rem;
+  text-align: center;
+  /* Completely borderless canvas layout */
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.home-motto {
+  margin: 0;
+  font-size: clamp(2.5rem, 6vw, 4.25rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   Quiz Setup View (Centered single card, clutter-free)
+   ========================================================================== */
+.quiz-setup-shell {
+  min-height: calc(100vh - 12rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quiz-card-centered {
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.quiz-card-centered h2 {
+  margin: 0 0 1.25rem 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   Buttons & Form Controls
+   ========================================================================== */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.65rem 1.25rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: all 0.15s ease;
+}
+
+.button.primary {
+  background: var(--primary);
+  color: #ffffff;
+  border: 1px solid var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.button.primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.button.ghost:hover {
+  background: var(--panel-muted);
+  color: var(--ink);
+}
+
+.button:disabled,
+.option:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.setup-form,
+.admin-form,
+.quiz-shell,
+.history-list,
+.question-list,
+.question-row,
+.admin-header,
+.list-toolbar,
+.quiz-topbar,
+.quiz-actions,
+.result-actions,
+.button-row,
+.filter-row,
+.row-actions,
+.field-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+}
+
+.field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0.7rem 0.85rem;
+  font-size: 0.925rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* ==========================================================================
+   Active Quiz Question View
+   ========================================================================== */
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.option {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 1rem 1.15rem;
+  text-align: left;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+}
+
+.option:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--panel-muted);
+}
+
+.option.selected {
+  border-color: var(--primary);
+  background: var(--panel-muted);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.option.correct {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: #065f46;
+}
+
+.option.wrong {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: #991b1b;
+}
+
+.progress-bar {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+  border: none;
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+}
+
+/* Helpers */
+.question-text,
+.hero h1,
+.panel h1,
+.panel h2,
+.panel h3,
+.home-motto,
+.eyebrow,
+.lede,
+.subtle,
+.feedback,
+.timer,
+.history-score {
+  margin: 0;
+}
+
+.question-text {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.lede,
+.subtle {
+  color: var(--muted);
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.feedback {
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  font-weight: 500;
+  border: 1px solid var(--line);
+}
+
+.feedback.good {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: #065f46;
+}
+
+.feedback.bad {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: #991b1b;
+}
+
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Media Queries */
+@media (min-width: 720px) {
+  .grid.two-up { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid.three-up { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .field-grid.four-up { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .options-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 719px) {
+  .site-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .brand, .site-nav {
+    justify-self: center;
+  }
+}
