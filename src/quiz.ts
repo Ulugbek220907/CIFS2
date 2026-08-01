@@ -1,14 +1,14 @@
 import { supabase } from './supabase';
 import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
-import { difficulties, passPercent, quizDurationSeconds, quizLength, subjects } from './constants';
+import { passPercent, quizDurationSeconds, quizLength, subjects, themes } from './constants';
 import { readSession, writeSession } from './storage';
-import type { AnswerReview, Difficulty, Question, ResultRow, Subject } from './types';
+import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
 
 interface QuizHistoryItem extends ResultRow {}
 
 interface QuizConfig {
   subject: Subject;
-  difficulty: Difficulty;
+  theme: Theme;
 }
 
 type QuizPhase = 'setup' | 'loading' | 'question' | 'review' | 'results' | 'error';
@@ -39,7 +39,7 @@ const poolCacheTtlMs = 1000 * 60 * 60 * 8;
 function defaultConfig(): QuizConfig {
   return {
     subject: subjects[0],
-    difficulty: difficulties[0],
+    theme: themes[0],
   };
 }
 
@@ -60,8 +60,8 @@ function subjectShortName(subject: Subject): string {
   }
 }
 
-function getQuestionCacheKey(subject: Subject, difficulty: Difficulty): string {
-  return `${questionCachePrefix}${subject}::${difficulty}`;
+function getQuestionCacheKey(subject: Subject, theme: Theme): string {
+  return `${questionCachePrefix}${subject}::${theme}`;
 }
 
 function loadConfig(): QuizConfig {
@@ -70,7 +70,7 @@ function loadConfig(): QuizConfig {
     return defaultConfig();
   }
 
-  if (!subjects.includes(saved.subject) || !difficulties.includes(saved.difficulty)) {
+  if (!subjects.includes(saved.subject) || !themes.includes(saved.theme)) {
     return defaultConfig();
   }
 
@@ -100,8 +100,8 @@ async function ensureAnonymousUser(): Promise<string> {
   return userId;
 }
 
-async function loadQuestionPool(subject: Subject, difficulty: Difficulty): Promise<Question[]> {
-  const cacheKey = getQuestionCacheKey(subject, difficulty);
+async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Question[]> {
+  const cacheKey = getQuestionCacheKey(subject, theme);
   const cached = readSession<{ createdAt: number; pool: Question[] }>(cacheKey);
   if (cached && Date.now() - cached.createdAt < poolCacheTtlMs && cached.pool.length >= quizLength) {
     return cached.pool;
@@ -109,9 +109,9 @@ async function loadQuestionPool(subject: Subject, difficulty: Difficulty): Promi
 
   const { data, error } = await supabase
     .from('questions')
-    .select('id, subject, difficulty, question_text, options, correct_index, explanation, created_at')
+    .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
     .eq('subject', subject)
-    .eq('difficulty', difficulty)
+    .eq('theme', theme)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -120,7 +120,7 @@ async function loadQuestionPool(subject: Subject, difficulty: Difficulty): Promi
 
   const pool = (data ?? []) as Question[];
   if (pool.length < quizLength) {
-    throw new Error(`Not enough questions for ${subject} / ${difficulty}. Add at least ${quizLength} questions.`);
+    throw new Error(`Not enough questions for ${subject} / ${theme}. Add at least ${quizLength} questions.`);
   }
 
   writeSession(cacheKey, { createdAt: Date.now(), pool });
@@ -235,15 +235,15 @@ export class QuizApp {
           </div>
         </section>
 
-        <section id="difficulty-step" class="difficulty-step ${activeSubject ? 'is-active' : ''}">
+        <section id="theme-step" class="theme-step ${activeSubject ? 'is-active' : ''}">
           <button class="back-link" type="button" data-action="back-subjects">← Choose Another Subject</button>
           <div class="selected-subject-header" id="active-subject-title">${escapeHtml(activeSubject ?? config.subject)}</div>
-          <div class="difficulty-options">
-            ${difficulties
+          <div class="theme-options">
+            ${themes
               .map(
-                (difficulty) => `
-                  <button class="difficulty-btn ${difficulty.toLowerCase()}" type="button" data-action="difficulty-select" data-difficulty="${difficulty}">
-                    ${difficulty}
+                (theme) => `
+                  <button class="theme-btn" type="button" data-action="theme-select" data-theme="${theme}">
+                    ${theme}
                   </button>
                 `,
               )
@@ -260,7 +260,7 @@ export class QuizApp {
       <section class="panel centered-shell">
         <div class="spinner" aria-hidden="true"></div>
         <h2>${label}</h2>
-        <p class="subtle">This only happens when the selected subject and difficulty are not already cached for the current session.</p>
+        <p class="subtle">This only happens when the selected subject and theme are not already cached for the current session.</p>
       </section>
     `;
   }
@@ -284,7 +284,7 @@ export class QuizApp {
         <div class="quiz-topbar">
           <div>
             <div class="eyebrow">${escapeHtml(this.state.config?.subject ?? '')}</div>
-            <h2>${escapeHtml(this.state.config?.difficulty ?? '')}</h2>
+            <h2>${escapeHtml(this.state.config?.theme ?? '')}</h2>
           </div>
           <div class="progress-wrap">
             <div class="progress-copy">Question ${this.state.currentIndex + 1} of ${this.state.questions.length}</div>
@@ -363,7 +363,7 @@ export class QuizApp {
                         <div class="history-item">
                           <div>
                             <strong>${escapeHtml(item.subject)}</strong>
-                            <div class="subtle">${escapeHtml(item.difficulty)} · ${formatDateTime(item.created_at)}</div>
+                            <div class="subtle">${escapeHtml(item.theme)} · ${formatDateTime(item.created_at)}</div>
                           </div>
                           <div class="history-score">${item.score}/${item.total} · ${formatPercent(item.percent)}</div>
                         </div>
@@ -407,7 +407,7 @@ export class QuizApp {
         selectedSubject: subject,
         config: {
           subject,
-          difficulty: this.state.config?.difficulty ?? difficulties[0],
+          theme: this.state.config?.theme ?? themes[0],
         },
       });
       return;
@@ -418,14 +418,14 @@ export class QuizApp {
       return;
     }
 
-    if (action === 'difficulty-select') {
-      const difficulty = actionButton.dataset.difficulty as Difficulty | undefined;
-      if (!difficulty) {
+    if (action === 'theme-select') {
+      const theme = actionButton.dataset.theme as Theme | undefined;
+      if (!theme) {
         return;
       }
 
       const subject = this.state.selectedSubject ?? this.state.config?.subject ?? defaultConfig().subject;
-      void this.startQuiz({ subject, difficulty });
+      void this.startQuiz({ subject, theme });
       return;
     }
 
@@ -480,13 +480,13 @@ export class QuizApp {
     event.preventDefault();
     const formData = new FormData(form);
     const subject = formData.get('subject');
-    const difficulty = formData.get('difficulty');
+    const theme = formData.get('theme');
 
-    if (typeof subject !== 'string' || typeof difficulty !== 'string') {
+    if (typeof subject !== 'string' || typeof theme !== 'string') {
       return;
     }
 
-    void this.startQuiz({ subject: subject as Subject, difficulty: difficulty as Difficulty });
+    void this.startQuiz({ subject: subject as Subject, theme: theme as Theme });
   }
 
   private async startQuiz(config: QuizConfig): Promise<void> {
@@ -513,7 +513,7 @@ export class QuizApp {
 
     try {
       const userId = await ensureAnonymousUser();
-      const pool = await loadQuestionPool(config.subject, config.difficulty);
+      const pool = await loadQuestionPool(config.subject, config.theme);
       const questions = pickQuizQuestions(pool);
       const now = Date.now();
       this.state = {
@@ -640,7 +640,7 @@ export class QuizApp {
       id: uid(),
       user_id: this.state.userId,
       subject: this.state.config?.subject ?? subjects[0],
-      difficulty: this.state.config?.difficulty ?? difficulties[0],
+      theme: this.state.config?.theme ?? themes[0],
       score: this.state.score,
       total: this.state.questions.length,
       percent: Math.round((this.state.score / this.state.questions.length) * 100),
@@ -667,7 +667,7 @@ export class QuizApp {
 
       const { data, error: historyError } = await supabase
         .from('results')
-        .select('id, user_id, subject, difficulty, score, total, percent, time_used_seconds, created_at')
+        .select('id, user_id, subject, theme, score, total, percent, time_used_seconds, created_at')
         .eq('user_id', this.state.userId)
         .order('created_at', { ascending: false })
         .limit(10);

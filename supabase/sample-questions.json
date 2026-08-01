@@ -1,0 +1,44 @@
+{
+  "questions": [
+    {
+      "subject": "Quantitative Methods",
+      "theme": "Theme 1",
+      "question_text": "What is 2 + 2?",
+      "options": ["3", "4", "5", "6"],
+      "correct_index": 1,
+      "explanation": "2 + 2 equals 4."
+    },
+    {
+      "subject": "Academic Communication Skills",
+      "theme": "Theme 2",
+      "question_text": "Which sentence is formal?",
+      "options": ["Hey, what up?", "Please find the report attached.", "Gonna send it later.", "See ya."],
+      "correct_index": 1,
+      "explanation": "Formal communication uses polite and professional wording."
+    },
+    {
+      "subject": "Professional Skills & Employability",
+      "theme": "Theme 3",
+      "question_text": "Which is a strong teamwork skill?",
+      "options": ["Interrupting others", "Ignoring deadlines", "Active listening", "Avoiding responsibility"],
+      "correct_index": 2,
+      "explanation": "Active listening helps teams understand each other clearly."
+    },
+    {
+      "subject": "Critical Thinking & Citizenship",
+      "theme": "Theme 4",
+      "question_text": "What is the best first step when evaluating a claim?",
+      "options": ["Accept it immediately", "Check the evidence", "Ignore it", "Repeat it"],
+      "correct_index": 1,
+      "explanation": "Critical thinking starts by checking the evidence behind the claim."
+    },
+    {
+      "subject": "Foundations of Economics",
+      "theme": "Theme 5",
+      "question_text": "What does supply usually describe?",
+      "options": ["How much consumers want", "How much producers offer", "Only the price", "Only the market size"],
+      "correct_index": 1,
+      "explanation": "Supply refers to the amount producers are willing to offer at a given price."
+    }
+  ]
+}

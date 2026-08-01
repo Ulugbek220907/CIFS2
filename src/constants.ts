@@ -1,4 +1,4 @@
-import type { Difficulty, Subject } from './types';
+import type { Subject, Theme } from './types';
 
 export const subjects: Subject[] = [
   'Quantitative Methods',
@@ -9,9 +9,22 @@ export const subjects: Subject[] = [
   'Understanding Finance',
 ];
 
-export const difficulties: Difficulty[] = ['Easy', 'Medium', 'Hard'];
+export const themes: Theme[] = [
+  'Theme 1',
+  'Theme 2',
+  'Theme 3',
+  'Theme 4',
+  'Theme 5',
+  'Theme 6',
+  'Theme 7',
+  'Theme 8',
+  'Theme 9',
+  'Theme 10',
+  'Theme 11',
+  'Theme 12',
+];
 
-export const quizLength = 20;
+export const quizLength = 25;
 export const quizDurationSeconds = 20 * 60;
 export const passPercent = 60;
 

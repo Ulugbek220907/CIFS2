@@ -6,12 +6,24 @@ export type Subject =
   | 'Foundations of Economics'
   | 'Understanding Finance';
 
-export type Difficulty = 'Easy' | 'Medium' | 'Hard';
+export type Theme =
+  | 'Theme 1'
+  | 'Theme 2'
+  | 'Theme 3'
+  | 'Theme 4'
+  | 'Theme 5'
+  | 'Theme 6'
+  | 'Theme 7'
+  | 'Theme 8'
+  | 'Theme 9'
+  | 'Theme 10'
+  | 'Theme 11'
+  | 'Theme 12';
 
 export interface Question {
   id: string;
   subject: Subject;
-  difficulty: Difficulty;
+  theme: Theme;
   question_text: string;
   options: string[];
   correct_index: number;
@@ -23,7 +35,7 @@ export interface ResultRow {
   id: string;
   user_id: string;
   subject: Subject;
-  difficulty: Difficulty;
+  theme: Theme;
   score: number;
   total: number;
   percent: number;

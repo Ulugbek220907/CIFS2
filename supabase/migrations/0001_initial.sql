@@ -3,7 +3,20 @@ create extension if not exists pgcrypto;
 create table if not exists public.questions (
   id uuid primary key default gen_random_uuid(),
   subject text not null,
-  difficulty text not null check (difficulty in ('Easy', 'Medium', 'Hard')),
+  theme text not null check (theme in (
+    'Theme 1',
+    'Theme 2',
+    'Theme 3',
+    'Theme 4',
+    'Theme 5',
+    'Theme 6',
+    'Theme 7',
+    'Theme 8',
+    'Theme 9',
+    'Theme 10',
+    'Theme 11',
+    'Theme 12'
+  )),
   question_text text not null,
   options jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) = 4),
   correct_index integer not null check (correct_index between 0 and 3),
@@ -21,14 +34,27 @@ create table if not exists public.questions (
   )
 );
 
-create index if not exists questions_subject_difficulty_created_at_idx
-  on public.questions (subject, difficulty, created_at desc);
+create index if not exists questions_subject_theme_created_at_idx
+  on public.questions (subject, theme, created_at desc);
 
 create table if not exists public.results (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
   subject text not null,
-  difficulty text not null check (difficulty in ('Easy', 'Medium', 'Hard')),
+  theme text not null check (theme in (
+    'Theme 1',
+    'Theme 2',
+    'Theme 3',
+    'Theme 4',
+    'Theme 5',
+    'Theme 6',
+    'Theme 7',
+    'Theme 8',
+    'Theme 9',
+    'Theme 10',
+    'Theme 11',
+    'Theme 12'
+  )),
   score integer not null check (score >= 0),
   total integer not null check (total > 0),
   percent integer not null check (percent between 0 and 100),
