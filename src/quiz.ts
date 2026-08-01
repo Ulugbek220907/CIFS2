@@ -1,10 +1,8 @@
 import { supabase } from './supabase';
 import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
-import { passPercent, quizDurationSeconds, quizLength, subjects, themes } from './constants';
+import { passPercent, quizLength, subjects, themes } from './constants';
 import { readSession, writeSession } from './storage';
 import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
-
-interface QuizHistoryItem extends ResultRow {}
 
 interface QuizConfig {
   subject: Subject;
@@ -24,11 +22,8 @@ interface QuizState {
   review: AnswerReview | null;
   score: number;
   startedAt: number | null;
-  deadlineAt: number | null;
-  timeLeft: number;
   error: string | null;
   result: ResultRow | null;
-  history: QuizHistoryItem[];
   busy: boolean;
 }
 
@@ -141,7 +136,6 @@ function formatDateTime(value: string): string {
 export class QuizApp {
   private readonly root: HTMLElement;
   private state: QuizState;
-  private timerId: number | null = null;
   private readonly handleClick = (event: MouseEvent) => this.onClick(event);
   private readonly handleSubmit = (event: SubmitEvent) => this.onSubmit(event);
 
@@ -158,10 +152,9 @@ export class QuizApp {
       review: null,
       score: 0,
       startedAt: null,
-      deadlineAt: null,
-      timeLeft: quizDurationSeconds,
       error: null,
       result: null,
+      saveStatus: null,
       history: [],
       busy: false,
     };
@@ -174,7 +167,6 @@ export class QuizApp {
   }
 
   destroy(): void {
-    this.stopTimer();
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('submit', this.handleSubmit);
   }
@@ -278,11 +270,10 @@ export class QuizApp {
 
   private renderQuiz(): string {
     const question = this.state.questions[this.state.currentIndex];
-    const timerClass = this.state.timeLeft <= 60 ? 'timer danger' : 'timer';
     return `
       <section class="panel quiz-shell">
         <div class="quiz-topbar">
-          <div>
+          <div class="quiz-meta">
             <div class="eyebrow">${escapeHtml(this.state.config?.subject ?? '')}</div>
             <h2>${escapeHtml(this.state.config?.theme ?? '')}</h2>
           </div>
@@ -290,7 +281,6 @@ export class QuizApp {
             <div class="progress-copy">Question ${this.state.currentIndex + 1} of ${this.state.questions.length}</div>
             <div class="progress-bar" aria-hidden="true"><span style="width: ${(this.state.currentIndex / this.state.questions.length) * 100}%"></span></div>
           </div>
-          <div class="${timerClass}" aria-live="polite">${formatDuration(this.state.timeLeft)}</div>
         </div>
         <article class="question-card">
           <div class="question-text">${escapeHtml(question.question_text)}</div>
@@ -333,7 +323,6 @@ export class QuizApp {
 
   private renderResults(): string {
     const result = this.state.result;
-    const history = this.state.history;
     if (!result) {
       return `<section class="panel centered-shell"><h2>No results available.</h2></section>`;
     }
@@ -342,38 +331,36 @@ export class QuizApp {
     const verdict = result.percent >= passPercent ? 'Pass' : 'Needs more work';
 
     return `
-      <section class="grid two-up results-grid">
-        <article class="panel result-hero ${verdictClass}">
-          <div class="eyebrow">Results</div>
+      <section class="results-stack">
+        <article class="panel results-banner ${verdictClass}">
+          <div class="eyebrow">Quiz completed</div>
           <h2>${verdict}</h2>
-          <p class="lede">You scored <strong>${result.score}/${result.total}</strong> (${formatPercent(result.percent)}). Time used: <strong>${formatDuration(result.time_used_seconds)}</strong>.</p>
-          <div class="result-actions">
-            <button class="button primary" type="button" data-action="retake">Retake quiz</button>
-            <button class="button ghost" type="button" data-action="change-subject">Pick another subject</button>
-          </div>
+          <p class="lede">Your attempt for <strong>${escapeHtml(result.subject)}</strong> / <strong>${escapeHtml(result.theme)}</strong> is complete.</p>
         </article>
-        <article class="panel history-panel">
-          <h3>Last 10 attempts</h3>
-          <div class="history-list">
-            ${
-              history.length
-                ? history
-                    .map(
-                      (item) => `
-                        <div class="history-item">
-                          <div>
-                            <strong>${escapeHtml(item.subject)}</strong>
-                            <div class="subtle">${escapeHtml(item.theme)} · ${formatDateTime(item.created_at)}</div>
-                          </div>
-                          <div class="history-score">${item.score}/${item.total} · ${formatPercent(item.percent)}</div>
-                        </div>
-                      `,
-                    )
-                    .join('')
-                : '<p class="subtle">No saved attempts yet.</p>'
-            }
-          </div>
-        </article>
+
+        <section class="grid two-up results-grid">
+          <article class="panel result-hero ${verdictClass}">
+            <div class="results-summary">
+              <div class="summary-card">
+                <span>Score</span>
+                <strong>${result.score}/${result.total}</strong>
+              </div>
+              <div class="summary-card">
+                <span>Percent</span>
+                <strong>${formatPercent(result.percent)}</strong>
+              </div>
+              <div class="summary-card">
+                <span>Time used</span>
+                <strong>${formatDuration(result.time_used_seconds)}</strong>
+              </div>
+            </div>
+            <p class="result-summary-copy">${result.percent >= passPercent ? 'You passed this theme.' : 'You can retake this theme to improve your score.'}</p>
+            <div class="result-actions">
+              <button class="button primary" type="button" data-action="retake">Retake quiz</button>
+              <button class="button ghost" type="button" data-action="change-subject">Pick another subject</button>
+            </div>
+          </article>
+        </section>
       </section>
     `;
   }
@@ -450,7 +437,6 @@ export class QuizApp {
     }
 
     if (action === 'change-subject' || action === 'reset-setup') {
-      this.stopTimer();
       this.setState({
         phase: 'setup',
         selectedSubject: null,
@@ -460,10 +446,9 @@ export class QuizApp {
         review: null,
         score: 0,
         startedAt: null,
-        deadlineAt: null,
-        timeLeft: quizDurationSeconds,
         error: null,
         result: null,
+        saveStatus: null,
         history: [],
         busy: false,
       });
@@ -490,7 +475,6 @@ export class QuizApp {
   }
 
   private async startQuiz(config: QuizConfig): Promise<void> {
-    this.stopTimer();
     this.setState({
       phase: 'loading',
       config,
@@ -505,8 +489,6 @@ export class QuizApp {
       review: null,
       score: 0,
       startedAt: null,
-      deadlineAt: null,
-      timeLeft: quizDurationSeconds,
     });
 
     saveConfig(config);
@@ -515,7 +497,6 @@ export class QuizApp {
       const userId = await ensureAnonymousUser();
       const pool = await loadQuestionPool(config.subject, config.theme);
       const questions = pickQuizQuestions(pool);
-      const now = Date.now();
       this.state = {
         ...this.state,
         phase: 'question',
@@ -525,18 +506,15 @@ export class QuizApp {
         selectedIndex: null,
         review: null,
         score: 0,
-        startedAt: now,
-        deadlineAt: now + quizDurationSeconds * 1000,
-        timeLeft: quizDurationSeconds,
+        startedAt: Date.now(),
         error: null,
         result: null,
+        saveStatus: null,
         history: [],
         busy: false,
       };
-      this.startTimer();
       this.render();
     } catch (error) {
-      this.stopTimer();
       this.setState({
         phase: 'error',
         busy: false,
@@ -545,34 +523,7 @@ export class QuizApp {
     }
   }
 
-  private startTimer(): void {
-    this.stopTimer();
-    this.timerId = window.setInterval(() => {
-      if (!this.state.deadlineAt) {
-        return;
-      }
-
-      const timeLeft = Math.max(0, Math.ceil((this.state.deadlineAt - Date.now()) / 1000));
-      if (timeLeft !== this.state.timeLeft) {
-        this.state = { ...this.state, timeLeft };
-        this.render();
-      }
-
-      if (timeLeft === 0) {
-        void this.finishQuiz('timeout');
-      }
-    }, 1000);
-  }
-
-  private stopTimer(): void {
-    if (this.timerId !== null) {
-      window.clearInterval(this.timerId);
-      this.timerId = null;
-    }
-  }
-
   private abortQuiz(): void {
-    this.stopTimer();
     this.setState({
       phase: 'setup',
       selectedSubject: null,
@@ -582,10 +533,9 @@ export class QuizApp {
       review: null,
       score: 0,
       startedAt: null,
-      deadlineAt: null,
-      timeLeft: quizDurationSeconds,
       error: null,
       result: null,
+      saveStatus: null,
       history: [],
       busy: false,
     });
@@ -635,7 +585,6 @@ export class QuizApp {
       return;
     }
 
-    this.stopTimer();
     const result: ResultRow = {
       id: uid(),
       user_id: this.state.userId,
@@ -644,54 +593,18 @@ export class QuizApp {
       score: this.state.score,
       total: this.state.questions.length,
       percent: Math.round((this.state.score / this.state.questions.length) * 100),
-      time_used_seconds: Math.min(
-        quizDurationSeconds,
-        Math.max(0, Math.round((Date.now() - this.state.startedAt) / 1000)),
-      ),
+      time_used_seconds: Math.max(0, Math.round((Date.now() - this.state.startedAt) / 1000)),
       created_at: new Date().toISOString(),
     };
 
     this.state = {
       ...this.state,
-      phase: 'loading',
-      busy: true,
+      phase: 'results',
+      busy: false,
       result,
     };
     this.render();
 
-    try {
-      const { error } = await supabase.from('results').insert(result);
-      if (error) {
-        throw error;
-      }
-
-      const { data, error: historyError } = await supabase
-        .from('results')
-        .select('id, user_id, subject, theme, score, total, percent, time_used_seconds, created_at')
-        .eq('user_id', this.state.userId)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (historyError) {
-        throw historyError;
-      }
-
-      this.state = {
-        ...this.state,
-        phase: 'results',
-        busy: false,
-        history: (data ?? []) as QuizHistoryItem[],
-      };
-      this.render();
-    } catch (error) {
-      this.state = {
-        ...this.state,
-        phase: 'results',
-        busy: false,
-        history: [],
-        error: error instanceof Error ? error.message : 'Could not save results.',
-      };
-      this.render();
-    }
+    // Result display is local-only; nothing is written to Supabase.
   }
 }
