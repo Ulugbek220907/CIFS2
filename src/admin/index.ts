@@ -174,10 +174,72 @@ function fillQuestionForm(form: HTMLFormElement, values: QuestionFormValues): vo
   });
 }
 
+function showToast(
+  message: string,
+  type: 'success' | 'error' | 'info' = 'success',
+  action?: { label: string; onClick: () => void }
+): void {
+  let container = document.querySelector('.admin-toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'admin-toast-container';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `admin-toast admin-toast-${type}`;
+
+  const iconSvg =
+    type === 'success'
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+      : type === 'error'
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+
+  let actionHtml = '';
+  if (action) {
+    actionHtml = `<button type="button" class="admin-toast-action">${escapeHtml(action.label)}</button>`;
+  }
+
+  toast.innerHTML = `
+    <span class="admin-toast-icon">${iconSvg}</span>
+    <span class="admin-toast-message">${escapeHtml(message)}</span>
+    ${actionHtml}
+    <button type="button" class="admin-toast-close" aria-label="Dismiss">&times;</button>
+  `;
+
+  const dismiss = (): void => {
+    toast.classList.add('hiding');
+    window.setTimeout(() => {
+      toast.remove();
+      if (container && container.children.length === 0) {
+        container.remove();
+      }
+    }, 250);
+  };
+
+  const timer = window.setTimeout(dismiss, 4500);
+
+  toast.querySelector('.admin-toast-close')?.addEventListener('click', () => {
+    window.clearTimeout(timer);
+    dismiss();
+  });
+
+  if (action) {
+    toast.querySelector('.admin-toast-action')?.addEventListener('click', () => {
+      window.clearTimeout(timer);
+      dismiss();
+      action.onClick();
+    });
+  }
+
+  container.appendChild(toast);
+}
+
 function renderQuestionRow(question: Question, isEditing: boolean): string {
   const letters = ['A', 'B', 'C', 'D'];
   return `
-    <article class="question-card-item ${isEditing ? 'editing' : ''}">
+    <article class="question-card-item ${isEditing ? 'editing' : ''}" data-card-id="${question.id}">
       <div class="question-meta-row">
         <div class="question-tags">
           <span class="tag-subject">${escapeHtml(question.subject)}</span>
@@ -208,6 +270,50 @@ function renderQuestionRow(question: Question, isEditing: boolean): string {
       </div>
     </article>
   `;
+}
+
+function updateFeedView(state: AdminState, root: HTMLElement): void {
+  const search = state.searchTerm.trim().toLowerCase();
+  const visibleQuestions = state.questions.filter((question) => {
+    const subjectMatch = state.filterSubject === 'All' || question.subject === state.filterSubject;
+    const themeMatch = state.filterTheme === 'All' || question.theme === state.filterTheme;
+    const searchMatch =
+      !search ||
+      question.question_text.toLowerCase().includes(search) ||
+      question.explanation.toLowerCase().includes(search) ||
+      question.options.some((opt) => opt.toLowerCase().includes(search));
+    return subjectMatch && themeMatch && searchMatch;
+  });
+
+  const feed = root.querySelector<HTMLElement>('#question-feed-container');
+  const countDisplay = root.querySelector<HTMLElement>('#library-count-display');
+  const totalCountEl = root.querySelector<HTMLElement>('#stat-total-questions');
+  const visibleCountEl = root.querySelector<HTMLElement>('#stat-visible-questions');
+  const activeFilterEl = root.querySelector<HTMLElement>('#stat-active-filter');
+
+  if (feed) {
+    feed.innerHTML =
+      visibleQuestions.length > 0
+        ? visibleQuestions.map((q) => renderQuestionRow(q, state.editingId === q.id)).join('')
+        : `
+          <div class="empty-state-box">
+            <h3>No matching questions</h3>
+            <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
+          </div>
+        `;
+  }
+  if (countDisplay) {
+    countDisplay.innerHTML = `Showing <strong>${visibleQuestions.length}</strong> of ${state.questions.length}`;
+  }
+  if (totalCountEl) {
+    totalCountEl.textContent = String(state.questions.length);
+  }
+  if (visibleCountEl) {
+    visibleCountEl.textContent = String(visibleQuestions.length);
+  }
+  if (activeFilterEl) {
+    activeFilterEl.textContent = `${state.filterSubject} · ${state.filterTheme}`;
+  }
 }
 
 export function bootAdmin(root: HTMLElement): void {
@@ -295,7 +401,7 @@ export function bootAdmin(root: HTMLElement): void {
           <article class="admin-stat-card">
             <div class="stat-content">
               <span class="stat-label">Total Questions</span>
-              <span class="stat-value">${totalQuestions}</span>
+              <span class="stat-value" id="stat-total-questions">${totalQuestions}</span>
             </div>
             <div class="stat-icon" aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
@@ -304,7 +410,7 @@ export function bootAdmin(root: HTMLElement): void {
           <article class="admin-stat-card">
             <div class="stat-content">
               <span class="stat-label">Visible Questions</span>
-              <span class="stat-value">${visibleCount}</span>
+              <span class="stat-value" id="stat-visible-questions">${visibleCount}</span>
             </div>
             <div class="stat-icon" aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -313,7 +419,7 @@ export function bootAdmin(root: HTMLElement): void {
           <article class="admin-stat-card">
             <div class="stat-content">
               <span class="stat-label">Active Filter</span>
-              <span class="stat-filter-value">${escapeHtml(state.filterSubject)} · ${escapeHtml(state.filterTheme)}</span>
+              <span class="stat-filter-value" id="stat-active-filter">${escapeHtml(state.filterSubject)} · ${escapeHtml(state.filterTheme)}</span>
             </div>
             <div class="stat-icon" aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
@@ -322,13 +428,39 @@ export function bootAdmin(root: HTMLElement): void {
         </section>
 
         <section class="admin-workspace">
-          <!-- Left Column: Form & Bulk Import -->
+          <!-- Left Column: Bulk Import (Top) & Manual Question Form -->
           <aside class="admin-sidebar">
+            <!-- Bulk JSON Import Card (At the top of manual question adding) -->
+            <article class="bulk-import-card">
+              <div class="bulk-import-header">
+                <div>
+                  <h2 class="bulk-import-title">Bulk JSON Import</h2>
+                  <p class="bulk-import-sub">Import multiple syllabus questions in one go via JSON.</p>
+                </div>
+                <button class="bulk-template-btn" type="button" data-action="bulk-import-template">
+                  Download template
+                </button>
+              </div>
+              <label class="bulk-dropzone" title="Click to select a JSON file">
+                <input id="bulk-import-file" class="bulk-import-input" type="file" accept="application/json,.json" />
+                <svg class="bulk-upload-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <div class="bulk-dropzone-text">
+                  <span class="bulk-dropzone-primary">Click to select JSON file</span>
+                  <span class="bulk-dropzone-secondary">Standard questions array format (.json)</span>
+                </div>
+              </label>
+            </article>
+
+            <!-- Manual Question Editor Form -->
             <article class="admin-panel">
               <div class="admin-panel-head">
                 <div>
-                  <h2>${state.editingId ? 'Edit Question' : 'Add Question'}</h2>
-                  <p>${state.editingId ? 'Updating existing syllabus item' : 'Create a single question with options'}</p>
+                  <h2 id="form-title">${state.editingId ? 'Edit Question <span class="edit-mode-badge">Editing</span>' : 'Add Question'}</h2>
+                  <p id="form-subtitle">${state.editingId ? 'Updating existing syllabus item' : 'Create a single question with options'}</p>
                 </div>
               </div>
               <div class="admin-panel-body">
@@ -394,28 +526,11 @@ export function bootAdmin(root: HTMLElement): void {
                   </label>
 
                   <div class="form-actions">
-                    <button class="button primary" type="submit">${state.editingId ? 'Save changes' : 'Add question'}</button>
-                    ${state.editingId ? '<button class="button ghost" type="button" data-action="cancel-edit">Cancel</button>' : ''}
+                    <button class="button primary" type="submit" id="btn-submit-question">${state.editingId ? 'Save changes' : 'Add question'}</button>
+                    <button class="button ghost" type="button" id="btn-cancel-edit" data-action="cancel-edit" style="${state.editingId ? '' : 'display: none;'}">Cancel</button>
                   </div>
                   ${state.error ? `<p class="feedback bad"><strong>Error</strong><span>${escapeHtml(state.error)}</span></p>` : ''}
                 </form>
-              </div>
-            </article>
-
-            <!-- Distinct Bulk Import Card -->
-            <article class="bulk-import-card">
-              <div class="bulk-import-header">
-                <h3>Bulk JSON Import</h3>
-              </div>
-              <p class="bulk-import-desc">
-                Batch upload multiple questions at once using a standardized JSON file.
-              </p>
-              <div class="bulk-actions-row">
-                <label class="bulk-file-btn">
-                  <span>Upload JSON</span>
-                  <input id="bulk-import-file" class="bulk-import-input" type="file" accept="application/json,.json" />
-                </label>
-                <button class="bulk-template-link" type="button" data-action="bulk-import-template">Download sample template</button>
               </div>
             </article>
           </aside>
@@ -525,18 +640,32 @@ export function bootAdmin(root: HTMLElement): void {
       const email = String(data.get('email') ?? '');
       const password = String(data.get('password') ?? '');
 
-      state.busy = true;
-      state.error = null;
-      render();
+      form.classList.add('is-submitting');
+      const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>Signing in...`;
+      }
+      const existingError = form.querySelector('.feedback.bad');
+      if (existingError) {
+        existingError.remove();
+      }
 
       void supabase.auth
         .signInWithPassword({ email, password })
         .then(({ data, error }) => {
-          state.busy = false;
           if (error) {
+            form.classList.remove('is-submitting');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Sign in';
+            }
             state.phase = 'login';
             state.error = error.message;
-            render();
+            const errP = document.createElement('p');
+            errP.className = 'feedback bad';
+            errP.innerHTML = `<strong>Error</strong><span>${escapeHtml(error.message)}</span>`;
+            form.appendChild(errP);
             return;
           }
 
@@ -546,10 +675,17 @@ export function bootAdmin(root: HTMLElement): void {
           void refresh();
         })
         .catch((error: unknown) => {
-          state.busy = false;
-          state.phase = 'login';
-          state.error = error instanceof Error ? error.message : 'Sign in failed.';
-          render();
+          form.classList.remove('is-submitting');
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Sign in';
+          }
+          const msg = error instanceof Error ? error.message : 'Sign in failed.';
+          state.error = msg;
+          const errP = document.createElement('p');
+          errP.className = 'feedback bad';
+          errP.innerHTML = `<strong>Error</strong><span>${escapeHtml(msg)}</span>`;
+          form.appendChild(errP);
         });
       return;
     }
@@ -572,63 +708,140 @@ export function bootAdmin(root: HTMLElement): void {
       };
 
       if (payload.options.some((option) => !option) || !payload.question_text || !payload.explanation) {
-        state.error = 'Fill out every field before saving.';
-        render();
+        showToast('Please fill out every field before saving.', 'error');
         return;
       }
 
-      state.busy = true;
-      state.error = null;
-      render();
+      form.classList.add('is-submitting');
+      const submitBtn = form.querySelector<HTMLButtonElement>('#btn-submit-question');
+      const originalText = submitBtn ? submitBtn.textContent || '' : '';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>Saving...`;
+      }
 
-      const request = state.editingId
-        ? supabase.from('questions').update({
-            subject: payload.subject,
-            theme: payload.theme,
-            question_text: payload.question_text,
-            options: payload.options,
-            correct_index: payload.correct_index,
-            explanation: payload.explanation,
-          }).eq('id', state.editingId)
-        : supabase.from('questions').insert({
-            subject: payload.subject,
-            theme: payload.theme,
-            question_text: payload.question_text,
-            options: payload.options,
-            correct_index: payload.correct_index,
-            explanation: payload.explanation,
-          });
+      const editingId = state.editingId;
 
-      void request.then(async ({ error }) => {
-        state.busy = false;
-        if (error) {
-          state.error = error.message;
-          render();
-          return;
+      if (editingId) {
+        const targetIndex = state.questions.findIndex((q) => q.id === editingId);
+        const previousQuestion = targetIndex !== -1 ? state.questions[targetIndex] : undefined;
+
+        if (targetIndex !== -1 && previousQuestion) {
+          state.questions[targetIndex] = {
+            ...previousQuestion,
+            ...payload,
+          };
         }
 
         state.editingId = null;
-        await refresh();
-        const formElement = root.querySelector<HTMLFormElement>('#question-form');
-        if (formElement) {
-          formElement.reset();
-          fillQuestionForm(formElement, defaultQuestionForm);
+        form.reset();
+        fillQuestionForm(form, defaultQuestionForm);
+        form.classList.remove('is-submitting');
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Add question';
         }
-      });
+        const cancelBtn = root.querySelector<HTMLElement>('#btn-cancel-edit');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        const formTitle = root.querySelector<HTMLElement>('#form-title');
+        if (formTitle) formTitle.textContent = 'Add Question';
+        const formSubtitle = root.querySelector<HTMLElement>('#form-subtitle');
+        if (formSubtitle) formSubtitle.textContent = 'Create a single question with options';
+
+        updateFeedView(state, root);
+        const updatedCard = root.querySelector<HTMLElement>(`[data-card-id="${editingId}"]`);
+        if (updatedCard) {
+          updatedCard.classList.add('just-updated');
+        }
+
+        showToast('Question updated successfully!', 'success');
+
+        void supabase
+          .from('questions')
+          .update({
+            subject: payload.subject,
+            theme: payload.theme,
+            question_text: payload.question_text,
+            options: payload.options,
+            correct_index: payload.correct_index,
+            explanation: payload.explanation,
+          })
+          .eq('id', editingId)
+          .then(({ error }) => {
+            if (error) {
+              if (previousQuestion && targetIndex !== -1) {
+                state.questions[targetIndex] = previousQuestion;
+                updateFeedView(state, root);
+              }
+              showToast(`Update failed: ${error.message}`, 'error');
+            }
+          });
+      } else {
+        void (async () => {
+          try {
+            const { data, error } = await supabase
+              .from('questions')
+              .insert({
+                subject: payload.subject,
+                theme: payload.theme,
+                question_text: payload.question_text,
+                options: payload.options,
+                correct_index: payload.correct_index,
+                explanation: payload.explanation,
+              })
+              .select();
+
+            form.classList.remove('is-submitting');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = originalText || 'Add question';
+            }
+
+            if (error) {
+              showToast(`Failed to add question: ${error.message}`, 'error');
+              return;
+            }
+
+            const created = (data && data[0]) as Question | undefined;
+            if (created) {
+              state.questions.unshift(created);
+            } else {
+              state.questions.unshift({
+                id: 'temp-' + Date.now(),
+                ...payload,
+                created_at: new Date().toISOString(),
+              });
+            }
+
+            form.reset();
+            fillQuestionForm(form, defaultQuestionForm);
+            updateFeedView(state, root);
+            const firstCard = root.querySelector<HTMLElement>('.question-card-item');
+            if (firstCard) {
+              firstCard.classList.add('just-added');
+            }
+            showToast('New question created successfully!', 'success');
+          } catch (error: unknown) {
+            form.classList.remove('is-submitting');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = originalText || 'Add question';
+            }
+            showToast(error instanceof Error ? error.message : 'Failed to add question.', 'error');
+          }
+        })();
+      }
+      return;
     }
   });
 
   root.addEventListener('change', (event) => {
     const input = event.target as HTMLInputElement | null;
-    if (!input) {
-      return;
-    }
-
-    if (input.id === 'bulk-import-file' && input.files?.length) {
+    if (input && input.id === 'bulk-import-file' && input.files?.length) {
       const file = input.files[0];
-      state.busy = true;
-      state.error = null;
-      render();
+      const dropzone = root.querySelector<HTMLElement>('.bulk-dropzone');
+      dropzone?.classList.add('is-importing');
+      showToast('Reading and importing JSON...', 'info');
 
       void readJsonFile(file)
         .then(async (parsed) => {
@@ -642,15 +855,34 @@ export function bootAdmin(root: HTMLElement): void {
             throw error;
           }
 
-          await refresh();
+          await loadQuestions();
+          updateFeedView(state, root);
+          dropzone?.classList.remove('is-importing');
           input.value = '';
+          showToast(`Successfully imported ${questions.length} questions!`, 'success');
         })
         .catch((error: unknown) => {
-          state.busy = false;
-          state.error = error instanceof Error ? error.message : 'Bulk import failed.';
-          render();
+          dropzone?.classList.remove('is-importing');
           input.value = '';
+          showToast(error instanceof Error ? error.message : 'Bulk import failed.', 'error');
         });
+      return;
+    }
+
+    const select = event.target as HTMLSelectElement | null;
+    if (!select) {
+      return;
+    }
+
+    if (select.id === 'filter-subject') {
+      state.filterSubject = select.value as AdminState['filterSubject'];
+      updateFeedView(state, root);
+      return;
+    }
+
+    if (select.id === 'filter-theme') {
+      state.filterTheme = select.value as AdminState['filterTheme'];
+      updateFeedView(state, root);
     }
   });
 
@@ -745,6 +977,9 @@ export function bootAdmin(root: HTMLElement): void {
     }
 
     if (action.dataset.action === 'sign-out') {
+      const btn = action as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = 'Signing out...';
       void supabase.auth.signOut().then(() => {
         state.phase = 'login';
         state.userEmail = null;
@@ -761,15 +996,72 @@ export function bootAdmin(root: HTMLElement): void {
         return;
       }
 
-      void supabase.from('questions').delete().eq('id', id).then(async ({ error }) => {
-        if (error) {
-          state.error = error.message;
-          render();
-          return;
-        }
+      const questionIndex = state.questions.findIndex((q) => q.id === id);
+      if (questionIndex === -1) {
+        return;
+      }
+      const deletedQuestion = state.questions[questionIndex];
 
-        await refresh();
+      const card = root.querySelector<HTMLElement>(`[data-card-id="${id}"]`) || action.closest<HTMLElement>('.question-card-item');
+      if (card) {
+        card.classList.add('is-deleting');
+      }
+
+      state.questions.splice(questionIndex, 1);
+
+      if (state.editingId === id) {
+        state.editingId = null;
+        const form = root.querySelector<HTMLFormElement>('#question-form');
+        if (form) {
+          form.reset();
+          fillQuestionForm(form, defaultQuestionForm);
+        }
+        const formTitle = root.querySelector<HTMLElement>('#form-title');
+        if (formTitle) formTitle.textContent = 'Add Question';
+        const formSubtitle = root.querySelector<HTMLElement>('#form-subtitle');
+        if (formSubtitle) formSubtitle.textContent = 'Create a single question with options';
+        const submitBtn = form?.querySelector<HTMLButtonElement>('#btn-submit-question');
+        if (submitBtn) submitBtn.textContent = 'Add question';
+        const cancelBtn = root.querySelector<HTMLElement>('#btn-cancel-edit');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+      }
+
+      const countDisplay = root.querySelector<HTMLElement>('#library-count-display');
+      const totalCountEl = root.querySelector<HTMLElement>('#stat-total-questions');
+      const visibleCountEl = root.querySelector<HTMLElement>('#stat-visible-questions');
+      const visibleCount = state.questions.filter((q) => {
+        const sub = state.filterSubject === 'All' || q.subject === state.filterSubject;
+        const th = state.filterTheme === 'All' || q.theme === state.filterTheme;
+        return sub && th;
+      }).length;
+      if (countDisplay) countDisplay.innerHTML = `Showing <strong>${visibleCount}</strong> of ${state.questions.length}`;
+      if (totalCountEl) totalCountEl.textContent = String(state.questions.length);
+      if (visibleCountEl) visibleCountEl.textContent = String(visibleCount);
+
+      let isUndone = false;
+      showToast('Question removed from bank', 'info', {
+        label: 'Undo',
+        onClick: () => {
+          isUndone = true;
+          state.questions.splice(questionIndex, 0, deletedQuestion);
+          updateFeedView(state, root);
+          const restored = root.querySelector<HTMLElement>(`[data-card-id="${id}"]`);
+          if (restored) restored.classList.add('just-restored');
+          showToast('Question restored', 'success');
+        },
       });
+
+      void supabase
+        .from('questions')
+        .delete()
+        .eq('id', id)
+        .then(({ error }) => {
+          if (error && !isUndone) {
+            state.questions.splice(questionIndex, 0, deletedQuestion);
+            updateFeedView(state, root);
+            showToast(`Delete failed: ${error.message}`, 'error');
+          }
+        });
       return;
     }
 
@@ -779,47 +1071,80 @@ export function bootAdmin(root: HTMLElement): void {
         return;
       }
 
-      state.editingId = id;
       const question = state.questions.find((item) => item.id === id);
       if (!question) {
         return;
       }
 
-      render();
+      state.editingId = id;
+
+      root.querySelectorAll('.question-card-item').forEach((item) => item.classList.remove('editing'));
+      const card = root.querySelector<HTMLElement>(`[data-card-id="${id}"]`) || action.closest<HTMLElement>('.question-card-item');
+      if (card) {
+        card.classList.add('editing');
+      }
+
       const form = root.querySelector<HTMLFormElement>('#question-form');
+      const formPanel = form?.closest<HTMLElement>('.admin-panel');
+      const formTitle = root.querySelector<HTMLElement>('#form-title');
+      const formSubtitle = root.querySelector<HTMLElement>('#form-subtitle');
+      const submitBtn = form?.querySelector<HTMLButtonElement>('#btn-submit-question');
+      const cancelBtn = root.querySelector<HTMLElement>('#btn-cancel-edit');
+
       if (form) {
         fillQuestionForm(form, questionToForm(question));
       }
+      if (formTitle) {
+        formTitle.innerHTML = `Edit Question <span class="edit-mode-badge">Editing</span>`;
+      }
+      if (formSubtitle) {
+        formSubtitle.textContent = 'Updating existing syllabus item';
+      }
+      if (submitBtn) {
+        submitBtn.textContent = 'Save changes';
+      }
+      if (cancelBtn) {
+        cancelBtn.style.display = 'inline-flex';
+      }
+      if (formPanel) {
+        formPanel.classList.remove('editing-focus');
+        void formPanel.offsetWidth;
+        formPanel.classList.add('editing-focus');
+        formPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      form?.querySelector<HTMLTextAreaElement>('textarea[name="question_text"]')?.focus();
       return;
     }
 
     if (action.dataset.action === 'cancel-edit') {
       state.editingId = null;
-      render();
+
+      root.querySelectorAll('.question-card-item').forEach((item) => item.classList.remove('editing'));
+
       const form = root.querySelector<HTMLFormElement>('#question-form');
+      const formTitle = root.querySelector<HTMLElement>('#form-title');
+      const formSubtitle = root.querySelector<HTMLElement>('#form-subtitle');
+      const submitBtn = form?.querySelector<HTMLButtonElement>('#btn-submit-question');
+      const cancelBtn = root.querySelector<HTMLElement>('#btn-cancel-edit');
+
       if (form) {
         form.reset();
         fillQuestionForm(form, defaultQuestionForm);
       }
+      if (formTitle) {
+        formTitle.textContent = 'Add Question';
+      }
+      if (formSubtitle) {
+        formSubtitle.textContent = 'Create a single question with options';
+      }
+      if (submitBtn) {
+        submitBtn.textContent = 'Add question';
+      }
+      if (cancelBtn) {
+        cancelBtn.style.display = 'none';
+      }
       return;
-    }
-  });
-
-  root.addEventListener('change', (event) => {
-    const select = event.target as HTMLSelectElement | null;
-    if (!select) {
-      return;
-    }
-
-    if (select.id === 'filter-subject') {
-      state.filterSubject = select.value as AdminState['filterSubject'];
-      render();
-      return;
-    }
-
-    if (select.id === 'filter-theme') {
-      state.filterTheme = select.value as AdminState['filterTheme'];
-      render();
     }
   });
 
@@ -830,32 +1155,6 @@ export function bootAdmin(root: HTMLElement): void {
     }
 
     state.searchTerm = input.value;
-    const search = state.searchTerm.trim().toLowerCase();
-    const filtered = state.questions.filter((question) => {
-      const subjectMatch = state.filterSubject === 'All' || question.subject === state.filterSubject;
-      const themeMatch = state.filterTheme === 'All' || question.theme === state.filterTheme;
-      const searchMatch =
-        !search ||
-        question.question_text.toLowerCase().includes(search) ||
-        question.explanation.toLowerCase().includes(search) ||
-        question.options.some((opt) => opt.toLowerCase().includes(search));
-      return subjectMatch && themeMatch && searchMatch;
-    });
-
-    const feed = root.querySelector('#question-feed-container');
-    const countDisplay = root.querySelector('#library-count-display');
-    if (feed) {
-      feed.innerHTML = filtered.length > 0
-        ? filtered.map((q) => renderQuestionRow(q, state.editingId === q.id)).join('')
-        : `
-          <div class="empty-state-box">
-            <h3>No matching questions</h3>
-            <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
-          </div>
-        `;
-    }
-    if (countDisplay) {
-      countDisplay.innerHTML = `Showing <strong>${filtered.length}</strong> of ${state.questions.length}`;
-    }
+    updateFeedView(state, root);
   });
 }
