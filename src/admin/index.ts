@@ -16,6 +16,7 @@ interface AdminState {
   filterTheme: Theme | 'All';
   searchTerm: string;
   editingId: string | null;
+  sidebarTab: 'single' | 'bulk';
 }
 
 interface QuestionFormValues {
@@ -327,6 +328,7 @@ export function bootAdmin(root: HTMLElement): void {
     filterTheme: 'All',
     searchTerm: '',
     editingId: null,
+    sidebarTab: 'single',
   };
 
   const render = (): void => {
@@ -428,109 +430,158 @@ export function bootAdmin(root: HTMLElement): void {
         </section>
 
         <section class="admin-workspace">
-          <!-- Left Column: Bulk Import (Top) & Manual Question Form -->
+          <!-- Left Column: Question Creator (Single Question / Bulk Import) -->
           <aside class="admin-sidebar">
-            <!-- Bulk JSON Import Card (At the top of manual question adding) -->
-            <article class="bulk-import-card">
-              <div class="bulk-import-header">
-                <div>
-                  <h2 class="bulk-import-title">Bulk JSON Import</h2>
-                  <p class="bulk-import-sub">Import multiple syllabus questions in one go via JSON.</p>
-                </div>
-                <button class="bulk-template-btn" type="button" data-action="bulk-import-template">
-                  Download template
+            <article class="admin-panel sidebar-creator-panel">
+              <nav class="sidebar-tab-switcher" role="tablist" aria-label="Question creation mode">
+                <button
+                  type="button"
+                  class="sidebar-tab-btn ${state.sidebarTab === 'single' ? 'active' : ''}"
+                  role="tab"
+                  aria-selected="${state.sidebarTab === 'single'}"
+                  data-action="switch-sidebar-tab"
+                  data-tab="single"
+                  id="tab-single-btn"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                  <span>Single Question</span>
                 </button>
-              </div>
-              <label class="bulk-dropzone" title="Click to select a JSON file">
-                <input id="bulk-import-file" class="bulk-import-input" type="file" accept="application/json,.json" />
-                <svg class="bulk-upload-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="17 8 12 3 7 8"/>
-                  <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                <div class="bulk-dropzone-text">
-                  <span class="bulk-dropzone-primary">Click to select JSON file</span>
-                  <span class="bulk-dropzone-secondary">Standard questions array format (.json)</span>
-                </div>
-              </label>
-            </article>
+                <button
+                  type="button"
+                  class="sidebar-tab-btn ${state.sidebarTab === 'bulk' ? 'active' : ''}"
+                  role="tab"
+                  aria-selected="${state.sidebarTab === 'bulk'}"
+                  data-action="switch-sidebar-tab"
+                  data-tab="bulk"
+                  id="tab-bulk-btn"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span>Bulk Import</span>
+                </button>
+              </nav>
 
-            <!-- Manual Question Editor Form -->
-            <article class="admin-panel">
-              <div class="admin-panel-head">
-                <div>
-                  <h2 id="form-title">${state.editingId ? 'Edit Question <span class="edit-mode-badge">Editing</span>' : 'Add Question'}</h2>
-                  <p id="form-subtitle">${state.editingId ? 'Updating existing syllabus item' : 'Create a single question with options'}</p>
-                </div>
-              </div>
-              <div class="admin-panel-body">
+              <!-- Single Question Tab -->
+              <div id="sidebar-tab-single" class="sidebar-tab-panel ${state.sidebarTab === 'single' ? 'active' : ''}" role="tabpanel" aria-labelledby="tab-single-btn">
                 <form id="question-form" class="admin-form" data-mode="${state.editingId ? 'edit' : 'add'}">
-                  <div class="form-grid-2">
-                    <label>
-                      <span>Subject</span>
-                      <select name="subject" required>
-                        ${subjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Theme</span>
-                      <select name="theme" required>
-                        ${themes.map((theme) => `<option value="${theme}">${theme}</option>`).join('')}
-                      </select>
-                    </label>
-                  </div>
+                  <div class="panel-form-scrollable">
+                    <div class="admin-panel-head">
+                      <div>
+                        <h2 id="form-title">${state.editingId ? 'Edit Question <span class="edit-mode-badge">Editing</span>' : 'Add Question'}</h2>
+                        <p id="form-subtitle">${state.editingId ? 'Updating existing syllabus item' : 'Create a single question manually with options'}</p>
+                      </div>
+                    </div>
 
-                  <label>
-                    <span>Question Prompt</span>
-                    <textarea name="question_text" rows="3" placeholder="Enter clear, concise question..." required></textarea>
-                  </label>
+                    <div class="admin-panel-fields">
+                      <div class="form-grid-2">
+                        <label>
+                          <span>Subject</span>
+                          <select name="subject" required>
+                            ${subjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Theme</span>
+                          <select name="theme" required>
+                            ${themes.map((theme) => `<option value="${theme}">${theme}</option>`).join('')}
+                          </select>
+                        </label>
+                      </div>
 
-                  <div class="field-group">
-                    <div class="field-group-title">Options & Correct Answer</div>
-                    <div class="field-hint">Type the 4 options and mark the radio button of the correct answer.</div>
-                    <div class="options-composer">
-                      <div class="option-composer-item">
-                        <span class="option-letter">A</span>
-                        <input name="option_0" type="text" placeholder="Option A" required />
-                        <label class="option-radio-wrap" title="Mark Option A as correct">
-                          <input type="radio" name="correct_index" value="0" checked />
-                        </label>
+                      <label>
+                        <span>Question Prompt</span>
+                        <textarea name="question_text" rows="2" placeholder="Enter clear, concise question..." required></textarea>
+                      </label>
+
+                      <div class="field-group">
+                        <div class="field-group-title">Options &amp; Correct Answer</div>
+                        <div class="field-hint">Type the 4 options and mark the radio button of the correct answer.</div>
+                        <div class="options-composer">
+                          <div class="option-composer-item">
+                            <span class="option-letter">A</span>
+                            <input name="option_0" type="text" placeholder="Option A" required />
+                            <label class="option-radio-wrap" title="Mark Option A as correct">
+                              <input type="radio" name="correct_index" value="0" checked />
+                            </label>
+                          </div>
+                          <div class="option-composer-item">
+                            <span class="option-letter">B</span>
+                            <input name="option_1" type="text" placeholder="Option B" required />
+                            <label class="option-radio-wrap" title="Mark Option B as correct">
+                              <input type="radio" name="correct_index" value="1" />
+                            </label>
+                          </div>
+                          <div class="option-composer-item">
+                            <span class="option-letter">C</span>
+                            <input name="option_2" type="text" placeholder="Option C" required />
+                            <label class="option-radio-wrap" title="Mark Option C as correct">
+                              <input type="radio" name="correct_index" value="2" />
+                            </label>
+                          </div>
+                          <div class="option-composer-item">
+                            <span class="option-letter">D</span>
+                            <input name="option_3" type="text" placeholder="Option D" required />
+                            <label class="option-radio-wrap" title="Mark Option D as correct">
+                              <input type="radio" name="correct_index" value="3" />
+                            </label>
+                          </div>
+                        </div>
                       </div>
-                      <div class="option-composer-item">
-                        <span class="option-letter">B</span>
-                        <input name="option_1" type="text" placeholder="Option B" required />
-                        <label class="option-radio-wrap" title="Mark Option B as correct">
-                          <input type="radio" name="correct_index" value="1" />
-                        </label>
-                      </div>
-                      <div class="option-composer-item">
-                        <span class="option-letter">C</span>
-                        <input name="option_2" type="text" placeholder="Option C" required />
-                        <label class="option-radio-wrap" title="Mark Option C as correct">
-                          <input type="radio" name="correct_index" value="2" />
-                        </label>
-                      </div>
-                      <div class="option-composer-item">
-                        <span class="option-letter">D</span>
-                        <input name="option_3" type="text" placeholder="Option D" required />
-                        <label class="option-radio-wrap" title="Mark Option D as correct">
-                          <input type="radio" name="correct_index" value="3" />
-                        </label>
-                      </div>
+
+                      <label>
+                        <span>Explanation</span>
+                        <textarea name="explanation" rows="2" placeholder="Explain why this answer is correct..." required></textarea>
+                      </label>
+
+                      ${state.error ? `<p class="feedback bad"><strong>Error</strong><span>${escapeHtml(state.error)}</span></p>` : ''}
                     </div>
                   </div>
 
-                  <label>
-                    <span>Explanation</span>
-                    <textarea name="explanation" rows="3" placeholder="Explain why this answer is correct..." required></textarea>
-                  </label>
-
-                  <div class="form-actions">
+                  <div class="form-actions sticky-actions">
                     <button class="button primary" type="submit" id="btn-submit-question">${state.editingId ? 'Save changes' : 'Add question'}</button>
                     <button class="button ghost" type="button" id="btn-cancel-edit" data-action="cancel-edit" style="${state.editingId ? '' : 'display: none;'}">Cancel</button>
                   </div>
-                  ${state.error ? `<p class="feedback bad"><strong>Error</strong><span>${escapeHtml(state.error)}</span></p>` : ''}
                 </form>
+              </div>
+
+              <!-- Bulk Import Tab -->
+              <div id="sidebar-tab-bulk" class="sidebar-tab-panel ${state.sidebarTab === 'bulk' ? 'active' : ''}" role="tabpanel" aria-labelledby="tab-bulk-btn">
+                <div class="bulk-import-container">
+                  <div class="admin-panel-head">
+                    <div>
+                      <h2 class="bulk-import-title">Bulk JSON Import</h2>
+                      <p class="bulk-import-sub">Import multiple syllabus questions in one go via JSON.</p>
+                    </div>
+                    <button class="bulk-template-btn" type="button" data-action="bulk-import-template">
+                      Download template
+                    </button>
+                  </div>
+                  <div class="bulk-panel-body">
+                    <div class="bulk-info-banner">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                      <span>Upload a JSON file containing a <code>questions</code> array or list of question objects with 4 options each.</span>
+                    </div>
+
+                    <label class="bulk-dropzone" title="Click to select a JSON file">
+                      <input id="bulk-import-file" class="bulk-import-input" type="file" accept="application/json,.json" />
+                      <svg class="bulk-upload-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                      <div class="bulk-dropzone-text">
+                        <span class="bulk-dropzone-primary">Click to select JSON file</span>
+                        <span class="bulk-dropzone-secondary">Standard questions array format (.json)</span>
+                      </div>
+                    </label>
+
+                    <div class="bulk-hint-row">
+                      <span>Need to add just one question?</span>
+                      <button type="button" class="bulk-switch-link" data-action="switch-sidebar-tab" data-tab="single">
+                        Add single question manually &rarr;
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </article>
           </aside>
@@ -746,7 +797,9 @@ export function bootAdmin(root: HTMLElement): void {
         const formTitle = root.querySelector<HTMLElement>('#form-title');
         if (formTitle) formTitle.textContent = 'Add Question';
         const formSubtitle = root.querySelector<HTMLElement>('#form-subtitle');
-        if (formSubtitle) formSubtitle.textContent = 'Create a single question with options';
+        if (formSubtitle) formSubtitle.textContent = 'Create a single question manually with options';
+        const scrollable = form.querySelector<HTMLElement>('.panel-form-scrollable');
+        if (scrollable) scrollable.scrollTop = 0;
 
         updateFeedView(state, root);
         const updatedCard = root.querySelector<HTMLElement>(`[data-card-id="${editingId}"]`);
@@ -815,6 +868,8 @@ export function bootAdmin(root: HTMLElement): void {
 
             form.reset();
             fillQuestionForm(form, defaultQuestionForm);
+            const scrollable = form.querySelector<HTMLElement>('.panel-form-scrollable');
+            if (scrollable) scrollable.scrollTop = 0;
             updateFeedView(state, root);
             const firstCard = root.querySelector<HTMLElement>('.question-card-item');
             if (firstCard) {
@@ -894,6 +949,26 @@ export function bootAdmin(root: HTMLElement): void {
 
     const action = target.closest<HTMLElement>('[data-action]');
     if (!action) {
+      return;
+    }
+
+    if (action.dataset.action === 'switch-sidebar-tab') {
+      const targetTab = action.dataset.tab as 'single' | 'bulk' | undefined;
+      if (!targetTab) {
+        return;
+      }
+
+      state.sidebarTab = targetTab;
+      root.querySelectorAll<HTMLElement>('.sidebar-tab-btn').forEach((btn) => {
+        const isTarget = btn.dataset.tab === targetTab;
+        btn.classList.toggle('active', isTarget);
+        btn.setAttribute('aria-selected', String(isTarget));
+      });
+
+      const singlePanel = root.querySelector<HTMLElement>('#sidebar-tab-single');
+      const bulkPanel = root.querySelector<HTMLElement>('#sidebar-tab-bulk');
+      if (singlePanel) singlePanel.classList.toggle('active', targetTab === 'single');
+      if (bulkPanel) bulkPanel.classList.toggle('active', targetTab === 'bulk');
       return;
     }
 
@@ -984,6 +1059,7 @@ export function bootAdmin(root: HTMLElement): void {
         state.phase = 'login';
         state.userEmail = null;
         state.editingId = null;
+        state.sidebarTab = 'single';
         state.error = null;
         render();
       });
@@ -1077,6 +1153,18 @@ export function bootAdmin(root: HTMLElement): void {
       }
 
       state.editingId = id;
+      state.sidebarTab = 'single';
+
+      root.querySelectorAll<HTMLElement>('.sidebar-tab-btn').forEach((btn) => {
+        const isTarget = btn.dataset.tab === 'single';
+        btn.classList.toggle('active', isTarget);
+        btn.setAttribute('aria-selected', String(isTarget));
+      });
+
+      const singlePanel = root.querySelector<HTMLElement>('#sidebar-tab-single');
+      const bulkPanel = root.querySelector<HTMLElement>('#sidebar-tab-bulk');
+      if (singlePanel) singlePanel.classList.add('active');
+      if (bulkPanel) bulkPanel.classList.remove('active');
 
       root.querySelectorAll('.question-card-item').forEach((item) => item.classList.remove('editing'));
       const card = root.querySelector<HTMLElement>(`[data-card-id="${id}"]`) || action.closest<HTMLElement>('.question-card-item');
@@ -1093,6 +1181,10 @@ export function bootAdmin(root: HTMLElement): void {
 
       if (form) {
         fillQuestionForm(form, questionToForm(question));
+        const scrollable = form.querySelector<HTMLElement>('.panel-form-scrollable');
+        if (scrollable) {
+          scrollable.scrollTop = 0;
+        }
       }
       if (formTitle) {
         formTitle.innerHTML = `Edit Question <span class="edit-mode-badge">Editing</span>`;
@@ -1131,12 +1223,16 @@ export function bootAdmin(root: HTMLElement): void {
       if (form) {
         form.reset();
         fillQuestionForm(form, defaultQuestionForm);
+        const scrollable = form.querySelector<HTMLElement>('.panel-form-scrollable');
+        if (scrollable) {
+          scrollable.scrollTop = 0;
+        }
       }
       if (formTitle) {
         formTitle.textContent = 'Add Question';
       }
       if (formSubtitle) {
-        formSubtitle.textContent = 'Create a single question with options';
+        formSubtitle.textContent = 'Create a single question manually with options';
       }
       if (submitBtn) {
         submitBtn.textContent = 'Add question';
@@ -1156,5 +1252,18 @@ export function bootAdmin(root: HTMLElement): void {
 
     state.searchTerm = input.value;
     updateFeedView(state, root);
+  });
+
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      const activeEl = document.activeElement;
+      if (activeEl && activeEl.closest('#question-form')) {
+        event.preventDefault();
+        const form = root.querySelector<HTMLFormElement>('#question-form');
+        if (form) {
+          form.requestSubmit();
+        }
+      }
+    }
   });
 }
