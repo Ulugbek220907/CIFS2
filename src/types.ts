@@ -1,10 +1,19 @@
-export type Subject =
+export type CifsSubject =
   | 'Quantitative Methods'
   | 'Academic Communication Skills'
   | 'Professional Skills & Employability'
   | 'Critical Thinking & Citizenship'
-  | 'Foundations of Economics'
+  | 'Introduction to Business and Economics'
   | 'Understanding Finance';
+
+export type Level4Subject =
+  | 'Math for Eco'
+  | 'Exploring Economics'
+  | 'Contemporary Issues in Global Economy';
+
+export type LegacySubject = 'Foundations of Economics';
+
+export type Subject = CifsSubject | Level4Subject | LegacySubject;
 
 export type Theme =
   | 'Theme 1'

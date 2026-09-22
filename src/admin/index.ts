@@ -55,7 +55,10 @@ const defaultQuestionForm: QuestionFormValues = {
 };
 
 function isSubject(value: unknown): value is Subject {
-  return typeof value === 'string' && (subjects as readonly string[]).includes(value);
+  return (
+    typeof value === 'string' &&
+    ((subjects as readonly string[]).includes(value) || value === 'Foundations of Economics')
+  );
 }
 
 function isTheme(value: unknown): value is Theme {
@@ -607,12 +610,36 @@ export function bootAdmin(root: HTMLElement): void {
       "explanation": "Critical thinking starts by checking the evidence behind the claim."
     },
     {
-      "subject": "Foundations of Economics",
+      "subject": "Introduction to Business and Economics",
       "theme": "Theme 5",
       "question_text": "What does supply usually describe?",
       "options": ["How much consumers want", "How much producers offer", "Only the price", "Only the market size"],
       "correct_index": 1,
       "explanation": "Supply refers to the amount producers are willing to offer at a given price."
+    },
+    {
+      "subject": "Math for Eco",
+      "theme": "Theme 1",
+      "question_text": "What is the derivative of f(x) = x^2 with respect to x?",
+      "options": ["x", "2x", "x^2", "2"],
+      "correct_index": 1,
+      "explanation": "Using the power rule, the derivative of x^2 is 2x."
+    },
+    {
+      "subject": "Exploring Economics",
+      "theme": "Theme 1",
+      "question_text": "What does GDP stand for in macroeconomics?",
+      "options": ["Gross Domestic Product", "General Demand Process", "Global Development Plan", "Gross Deposit Profit"],
+      "correct_index": 0,
+      "explanation": "GDP stands for Gross Domestic Product."
+    },
+    {
+      "subject": "Contemporary Issues in Global Economy",
+      "theme": "Theme 1",
+      "question_text": "What is globalization primarily characterized by?",
+      "options": ["Isolationist policies", "Increased international integration and trade", "Fixed currency standards only", "Reduction in digital communication"],
+      "correct_index": 1,
+      "explanation": "Globalization involves increased international flow of trade, capital, information, and people."
     }
   ]
 }`;

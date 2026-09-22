@@ -1,8 +1,19 @@
 import { supabase } from './supabase';
 import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
-import { passPercent, quizLength, subjects, themes } from './constants';
+import {
+  cifsSubjects,
+  getQuizThemeTitle,
+  level4Subjects,
+  passPercent,
+  quizLength,
+  subjectShortName,
+  subjects,
+  themes,
+} from './constants';
 import { readSession, writeSession } from './storage';
 import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
+
+export type QuizLevel = 'CIFS' | 'Level 4';
 
 interface QuizConfig {
   subject: Subject;
@@ -14,6 +25,7 @@ type QuizPhase = 'setup' | 'loading' | 'question' | 'review' | 'results' | 'erro
 interface QuizState {
   phase: QuizPhase;
   config: QuizConfig | null;
+  selectedLevel: QuizLevel;
   selectedSubject: Subject | null;
   userId: string | null;
   questions: Question[];
@@ -38,23 +50,6 @@ function defaultConfig(): QuizConfig {
   };
 }
 
-function subjectShortName(subject: Subject): string {
-  switch (subject) {
-    case 'Quantitative Methods':
-      return 'QM';
-    case 'Academic Communication Skills':
-      return 'ACS';
-    case 'Professional Skills & Employability':
-      return 'PSE';
-    case 'Critical Thinking & Citizenship':
-      return 'CTC';
-    case 'Foundations of Economics':
-      return 'FoE';
-    case 'Understanding Finance':
-      return 'UF';
-  }
-}
-
 function getQuestionCacheKey(subject: Subject, theme: Theme): string {
   return `${questionCachePrefix}${subject}::${theme}`;
 }
@@ -63,6 +58,10 @@ function loadConfig(): QuizConfig {
   const saved = readSession<QuizConfig>(activeConfigKey);
   if (!saved) {
     return defaultConfig();
+  }
+
+  if (saved.subject === ('Foundations of Economics' as Subject)) {
+    saved.subject = 'Introduction to Business and Economics';
   }
 
   if (!subjects.includes(saved.subject) || !themes.includes(saved.theme)) {
@@ -102,10 +101,15 @@ async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Questio
     return cached.pool;
   }
 
+  const subjectFilter =
+    subject === 'Introduction to Business and Economics'
+      ? ['Introduction to Business and Economics', 'Foundations of Economics']
+      : [subject];
+
   const { data, error } = await supabase
     .from('questions')
     .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
-    .eq('subject', subject)
+    .in('subject', subjectFilter)
     .eq('theme', theme)
     .order('created_at', { ascending: false });
 
@@ -141,9 +145,12 @@ export class QuizApp {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    const initialConfig = loadConfig();
+    const initialLevel: QuizLevel = level4Subjects.includes(initialConfig.subject) ? 'Level 4' : 'CIFS';
     this.state = {
       phase: 'setup',
-      config: loadConfig(),
+      config: initialConfig,
+      selectedLevel: initialLevel,
       selectedSubject: null,
       userId: null,
       questions: [],
@@ -154,19 +161,19 @@ export class QuizApp {
       startedAt: null,
       error: null,
       result: null,
-      saveStatus: null,
-      history: [],
       busy: false,
     };
   }
 
   mount(): void {
+    document.body.classList.remove('quiz-fullscreen');
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('submit', this.handleSubmit);
     this.render();
   }
 
   destroy(): void {
+    document.body.classList.remove('quiz-fullscreen');
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('submit', this.handleSubmit);
   }
@@ -205,20 +212,23 @@ export class QuizApp {
   private renderSetup(): string {
     const config = this.state.config ?? defaultConfig();
     const activeSubject = this.state.selectedSubject;
+    const currentLevel = this.state.selectedLevel;
+    const currentSubjects = currentLevel === 'Level 4' ? level4Subjects : cifsSubjects;
+
     return `
       <section class="quiz-flow">
         <section id="subject-selection-step" class="subject-step ${activeSubject ? 'is-hidden' : ''}">
           <nav class="level-nav" aria-label="Quiz levels">
-            <button class="level-tab active" type="button">CIFS</button>
-            <button class="level-tab locked" type="button" disabled>Level 4 🔒</button>
+            <button class="level-tab ${currentLevel === 'CIFS' ? 'active' : ''}" type="button" data-action="level-select" data-level="CIFS">CIFS</button>
+            <button class="level-tab ${currentLevel === 'Level 4' ? 'active' : ''}" type="button" data-action="level-select" data-level="Level 4">Level 4</button>
             <button class="level-tab locked" type="button" disabled>Level 5 🔒</button>
             <button class="level-tab locked" type="button" disabled>Level 6 🔒</button>
           </nav>
           <div class="subjects-grid">
-            ${subjects
+            ${currentSubjects
               .map(
                 (subject) => `
-                  <button class="subject-card" type="button" data-action="subject-select" data-subject="${escapeHtml(subject)}">
+                  <button class="subject-card" type="button" data-action="subject-select" data-subject="${escapeHtml(subject)}" title="${escapeHtml(subject)}">
                     ${escapeHtml(subjectShortName(subject))}
                   </button>
                 `,
@@ -270,14 +280,12 @@ export class QuizApp {
 
   private renderQuiz(): string {
     const question = this.state.questions[this.state.currentIndex];
+    const quizTitle = getQuizThemeTitle(this.state.config?.subject, this.state.config?.theme);
     return `
       <section class="panel quiz-shell">
-        <div class="quiz-topbar">
-          <div class="quiz-meta">
-            <div class="eyebrow">${escapeHtml(this.state.config?.subject ?? '')}</div>
-            <h2>${escapeHtml(this.state.config?.theme ?? '')}</h2>
-          </div>
-          <div class="progress-wrap">
+        <div class="quiz-topbar-centered">
+          <h2 class="quiz-title-centered">${escapeHtml(quizTitle)}</h2>
+          <div class="quiz-progress-centered">
             <div class="progress-copy">Question ${this.state.currentIndex + 1} of ${this.state.questions.length}</div>
             <div class="progress-bar" aria-hidden="true"><span style="width: ${(this.state.currentIndex / this.state.questions.length) * 100}%"></span></div>
           </div>
@@ -384,6 +392,17 @@ export class QuizApp {
 
     const action = actionButton.dataset.action;
 
+    if (action === 'level-select') {
+      const level = actionButton.dataset.level as QuizLevel | undefined;
+      if (level && level !== this.state.selectedLevel) {
+        this.setState({
+          selectedLevel: level,
+          selectedSubject: null,
+        });
+      }
+      return;
+    }
+
     if (action === 'subject-select') {
       const subject = actionButton.dataset.subject as Subject | undefined;
       if (!subject) {
@@ -437,6 +456,7 @@ export class QuizApp {
     }
 
     if (action === 'change-subject' || action === 'reset-setup') {
+      document.body.classList.remove('quiz-fullscreen');
       this.setState({
         phase: 'setup',
         selectedSubject: null,
@@ -448,8 +468,6 @@ export class QuizApp {
         startedAt: null,
         error: null,
         result: null,
-        saveStatus: null,
-        history: [],
         busy: false,
       });
       return;
@@ -475,13 +493,14 @@ export class QuizApp {
   }
 
   private async startQuiz(config: QuizConfig): Promise<void> {
+    document.body.classList.add('quiz-fullscreen');
     this.setState({
       phase: 'loading',
       config,
       selectedSubject: null,
+      selectedLevel: level4Subjects.includes(config.subject) ? 'Level 4' : 'CIFS',
       error: null,
       busy: true,
-      history: [],
       result: null,
       questions: [],
       currentIndex: 0,
@@ -509,12 +528,11 @@ export class QuizApp {
         startedAt: Date.now(),
         error: null,
         result: null,
-        saveStatus: null,
-        history: [],
         busy: false,
       };
       this.render();
     } catch (error) {
+      document.body.classList.remove('quiz-fullscreen');
       this.setState({
         phase: 'error',
         busy: false,
@@ -524,6 +542,7 @@ export class QuizApp {
   }
 
   private abortQuiz(): void {
+    document.body.classList.remove('quiz-fullscreen');
     this.setState({
       phase: 'setup',
       selectedSubject: null,
@@ -535,8 +554,6 @@ export class QuizApp {
       startedAt: null,
       error: null,
       result: null,
-      saveStatus: null,
-      history: [],
       busy: false,
     });
   }
