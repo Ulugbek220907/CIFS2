@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { isSupabaseConfigured, supabase } from './supabase';
 import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
 import {
   cifsSubjects,
@@ -511,6 +511,17 @@ export class QuizApp {
     });
 
     saveConfig(config);
+
+    if (!isSupabaseConfigured) {
+      document.body.classList.remove('quiz-fullscreen');
+      this.setState({
+        phase: 'error',
+        busy: false,
+        error:
+          'Supabase API kalitlari (VITE_SUPABASE_URL va VITE_SUPABASE_ANON_KEY) Netlify parametrlariga kiritilmagan. Iltimos, Netlify Environment Variables bo\'limiga kalitlarni kiriting va qayta deploy qiling.',
+      });
+      return;
+    }
 
     try {
       const userId = await ensureAnonymousUser();
