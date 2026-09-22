@@ -14,6 +14,7 @@ interface AdminState {
   questions: Question[];
   filterSubject: Subject | 'All';
   filterTheme: Theme | 'All';
+  searchTerm: string;
   editingId: string | null;
 }
 
@@ -152,13 +153,18 @@ function fillQuestionForm(form: HTMLFormElement, values: QuestionFormValues): vo
   const theme = form.elements.namedItem('theme') as HTMLSelectElement | null;
   const questionText = form.elements.namedItem('question_text') as HTMLTextAreaElement | HTMLInputElement | null;
   const explanation = form.elements.namedItem('explanation') as HTMLTextAreaElement | HTMLInputElement | null;
-  const correctIndex = form.elements.namedItem('correct_index') as HTMLSelectElement | null;
 
   if (subject) subject.value = values.subject;
   if (theme) theme.value = values.theme;
   if (questionText) questionText.value = values.question_text;
   if (explanation) explanation.value = values.explanation;
-  if (correctIndex) correctIndex.value = values.correct_index;
+
+  const correctRadios = form.elements.namedItem('correct_index');
+  if (correctRadios instanceof RadioNodeList) {
+    correctRadios.value = values.correct_index;
+  } else if (correctRadios instanceof HTMLInputElement) {
+    correctRadios.checked = correctRadios.value === values.correct_index;
+  }
 
   (['option_0', 'option_1', 'option_2', 'option_3'] as const).forEach((field) => {
     const element = form.elements.namedItem(field) as HTMLInputElement | null;
@@ -169,25 +175,37 @@ function fillQuestionForm(form: HTMLFormElement, values: QuestionFormValues): vo
 }
 
 function renderQuestionRow(question: Question, isEditing: boolean): string {
+  const letters = ['A', 'B', 'C', 'D'];
   return `
-    <article class="question-row ${isEditing ? 'editing' : ''}">
-      <div class="question-row-head">
-        <div>
-          <strong>${escapeHtml(question.subject)}</strong>
-          <div class="subtle">${escapeHtml(question.theme)}</div>
+    <article class="question-card-item ${isEditing ? 'editing' : ''}">
+      <div class="question-meta-row">
+        <div class="question-tags">
+          <span class="tag-subject">${escapeHtml(question.subject)}</span>
+          <span class="tag-theme">${escapeHtml(question.theme)}</span>
         </div>
-        <div class="row-actions">
-          <button class="button ghost" type="button" data-action="edit-question" data-id="${question.id}">Edit</button>
-          <button class="button ghost danger" type="button" data-action="delete-question" data-id="${question.id}">Delete</button>
+        <div class="question-card-actions">
+          <button class="action-btn-sm" type="button" data-action="edit-question" data-id="${question.id}">Edit</button>
+          <button class="action-btn-sm danger" type="button" data-action="delete-question" data-id="${question.id}">Delete</button>
         </div>
       </div>
-      <p>${escapeHtml(question.question_text)}</p>
-      <div class="option-preview">
+      <div class="question-prompt">${escapeHtml(question.question_text)}</div>
+      <div class="question-options-list">
         ${question.options
-          .map((option, index) => `<span class="option-chip ${index === question.correct_index ? 'correct' : ''}">${escapeHtml(option)}</span>`)
+          .map((option, index) => {
+            const isCorrect = index === question.correct_index;
+            const letter = letters[index] ?? '';
+            return `
+              <div class="question-option-item ${isCorrect ? 'correct' : ''}">
+                <span><strong>${letter}.</strong> ${escapeHtml(option)}</span>
+                ${isCorrect ? '<span class="correct-badge">Correct</span>' : ''}
+              </div>
+            `;
+          })
           .join('')}
       </div>
-      <p class="subtle">${escapeHtml(question.explanation)}</p>
+      <div class="question-explanation-box">
+        <strong>Explanation:</strong> ${escapeHtml(question.explanation)}
+      </div>
     </article>
   `;
 }
@@ -201,6 +219,7 @@ export function bootAdmin(root: HTMLElement): void {
     questions: [],
     filterSubject: 'All',
     filterTheme: 'All',
+    searchTerm: '',
     editingId: null,
   };
 
@@ -242,125 +261,197 @@ export function bootAdmin(root: HTMLElement): void {
       return;
     }
 
+    const search = state.searchTerm.trim().toLowerCase();
     const visibleQuestions = state.questions.filter((question) => {
       const subjectMatch = state.filterSubject === 'All' || question.subject === state.filterSubject;
       const themeMatch = state.filterTheme === 'All' || question.theme === state.filterTheme;
-      return subjectMatch && themeMatch;
+      const searchMatch =
+        !search ||
+        question.question_text.toLowerCase().includes(search) ||
+        question.explanation.toLowerCase().includes(search) ||
+        question.options.some((opt) => opt.toLowerCase().includes(search));
+      return subjectMatch && themeMatch && searchMatch;
     });
     const totalQuestions = state.questions.length;
     const visibleCount = visibleQuestions.length;
 
     root.innerHTML = `
       <section class="admin-shell">
-        <header class="admin-header panel">
-          <div>
-            <div class="eyebrow">Admin</div>
-            <h1>Question bank</h1>
-            <p class="subtle">Create, filter, edit, and remove questions in one place.</p>
+        <header class="admin-header">
+          <div class="admin-brand">
+            <div class="admin-badge-icon" aria-hidden="true">C</div>
+            <div>
+              <h1>CIFS Admin Console <span class="admin-pill-tag">Operate</span></h1>
+              <p>Manage curriculum questions, verify options, and bulk import syllabus content.</p>
+            </div>
           </div>
           <div class="admin-session">
-            <span class="admin-user">${escapeHtml(state.userEmail ?? '')}</span>
+            <span class="admin-user-pill">${escapeHtml(state.userEmail ?? '')}</span>
             <button class="button ghost" type="button" data-action="sign-out">Sign out</button>
           </div>
         </header>
 
         <section class="admin-stats">
-          <article class="panel admin-stat-card">
-            <span class="subtle">Total questions</span>
-            <strong>${totalQuestions}</strong>
+          <article class="admin-stat-card">
+            <div class="stat-content">
+              <span class="stat-label">Total Questions</span>
+              <span class="stat-value">${totalQuestions}</span>
+            </div>
+            <div class="stat-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
+            </div>
           </article>
-          <article class="panel admin-stat-card">
-            <span class="subtle">Visible questions</span>
-            <strong>${visibleCount}</strong>
+          <article class="admin-stat-card">
+            <div class="stat-content">
+              <span class="stat-label">Visible Questions</span>
+              <span class="stat-value">${visibleCount}</span>
+            </div>
+            <div class="stat-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
           </article>
-          <article class="panel admin-stat-card">
-            <span class="subtle">Filters</span>
-            <strong>${escapeHtml(state.filterSubject)} / ${escapeHtml(state.filterTheme)}</strong>
+          <article class="admin-stat-card">
+            <div class="stat-content">
+              <span class="stat-label">Active Filter</span>
+              <span class="stat-filter-value">${escapeHtml(state.filterSubject)} · ${escapeHtml(state.filterTheme)}</span>
+            </div>
+            <div class="stat-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            </div>
           </article>
         </section>
 
-        <section class="grid two-up admin-grid">
-          <article class="panel admin-form-panel">
-            <div class="admin-panel-head">
-              <div>
-                <div class="eyebrow">Question editor</div>
-                <h2>${state.editingId ? 'Edit question' : 'Add question'}</h2>
+        <section class="admin-workspace">
+          <!-- Left Column: Form & Bulk Import -->
+          <aside class="admin-sidebar">
+            <article class="admin-panel">
+              <div class="admin-panel-head">
+                <div>
+                  <h2>${state.editingId ? 'Edit Question' : 'Add Question'}</h2>
+                  <p>${state.editingId ? 'Updating existing syllabus item' : 'Create a single question with options'}</p>
+                </div>
               </div>
-              <div class="admin-import">
-                <input id="bulk-import-file" class="bulk-import-input" type="file" accept="application/json,.json" data-action="bulk-import-file" />
-                <button class="button ghost" type="button" data-action="bulk-import-template">Download sample JSON</button>
-              </div>
-            </div>
-            <p class="subtle admin-import-note">Upload a JSON file with a <strong>questions</strong> array or a plain array of question objects.</p>
-            <form id="question-form" class="admin-form compact" data-mode="${state.editingId ? 'edit' : 'add'}">
-              <div class="field-grid">
-                <label>
-                  <span>Subject</span>
-                  <select name="subject" required>
-                    ${subjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
-                  </select>
-                </label>
-                <label>
-                  <span>Theme</span>
-                  <select name="theme" required>
-                    ${themes.map((theme) => `<option value="${theme}">${theme}</option>`).join('')}
-                  </select>
-                </label>
-              </div>
-              <label>
-                <span>Question</span>
-                <textarea name="question_text" rows="4" required></textarea>
-              </label>
-              <div class="field-grid four-up">
-                <label><span>Option 1</span><input name="option_0" type="text" required /></label>
-                <label><span>Option 2</span><input name="option_1" type="text" required /></label>
-                <label><span>Option 3</span><input name="option_2" type="text" required /></label>
-                <label><span>Option 4</span><input name="option_3" type="text" required /></label>
-              </div>
-              <div class="field-grid">
-                <label>
-                  <span>Correct answer</span>
-                  <select name="correct_index" required>
-                    <option value="0">Option 1</option>
-                    <option value="1">Option 2</option>
-                    <option value="2">Option 3</option>
-                    <option value="3">Option 4</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Explanation</span>
-                  <textarea name="explanation" rows="4" required></textarea>
-                </label>
-              </div>
-              <div class="button-row">
-                <button class="button primary" type="submit">${state.editingId ? 'Save changes' : 'Add question'}</button>
-                ${state.editingId ? '<button class="button ghost" type="button" data-action="cancel-edit">Cancel</button>' : ''}
-              </div>
-              ${state.error ? `<p class="feedback bad"><strong>Error</strong><span>${escapeHtml(state.error)}</span></p>` : ''}
-            </form>
-          </article>
+              <div class="admin-panel-body">
+                <form id="question-form" class="admin-form" data-mode="${state.editingId ? 'edit' : 'add'}">
+                  <div class="form-grid-2">
+                    <label>
+                      <span>Subject</span>
+                      <select name="subject" required>
+                        ${subjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Theme</span>
+                      <select name="theme" required>
+                        ${themes.map((theme) => `<option value="${theme}">${theme}</option>`).join('')}
+                      </select>
+                    </label>
+                  </div>
 
-          <article class="panel admin-list-panel">
-            <div class="admin-panel-head admin-list-head">
-              <div>
-                <div class="eyebrow">Question library</div>
-                <h2>Questions</h2>
+                  <label>
+                    <span>Question Prompt</span>
+                    <textarea name="question_text" rows="3" placeholder="Enter clear, concise question..." required></textarea>
+                  </label>
+
+                  <div class="field-group">
+                    <div class="field-group-title">Options & Correct Answer</div>
+                    <div class="field-hint">Type the 4 options and mark the radio button of the correct answer.</div>
+                    <div class="options-composer">
+                      <div class="option-composer-item">
+                        <span class="option-letter">A</span>
+                        <input name="option_0" type="text" placeholder="Option A" required />
+                        <label class="option-radio-wrap" title="Mark Option A as correct">
+                          <input type="radio" name="correct_index" value="0" checked />
+                        </label>
+                      </div>
+                      <div class="option-composer-item">
+                        <span class="option-letter">B</span>
+                        <input name="option_1" type="text" placeholder="Option B" required />
+                        <label class="option-radio-wrap" title="Mark Option B as correct">
+                          <input type="radio" name="correct_index" value="1" />
+                        </label>
+                      </div>
+                      <div class="option-composer-item">
+                        <span class="option-letter">C</span>
+                        <input name="option_2" type="text" placeholder="Option C" required />
+                        <label class="option-radio-wrap" title="Mark Option C as correct">
+                          <input type="radio" name="correct_index" value="2" />
+                        </label>
+                      </div>
+                      <div class="option-composer-item">
+                        <span class="option-letter">D</span>
+                        <input name="option_3" type="text" placeholder="Option D" required />
+                        <label class="option-radio-wrap" title="Mark Option D as correct">
+                          <input type="radio" name="correct_index" value="3" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label>
+                    <span>Explanation</span>
+                    <textarea name="explanation" rows="3" placeholder="Explain why this answer is correct..." required></textarea>
+                  </label>
+
+                  <div class="form-actions">
+                    <button class="button primary" type="submit">${state.editingId ? 'Save changes' : 'Add question'}</button>
+                    ${state.editingId ? '<button class="button ghost" type="button" data-action="cancel-edit">Cancel</button>' : ''}
+                  </div>
+                  ${state.error ? `<p class="feedback bad"><strong>Error</strong><span>${escapeHtml(state.error)}</span></p>` : ''}
+                </form>
               </div>
-              <div class="filter-row">
-                <select id="filter-subject" aria-label="Filter by subject">
+            </article>
+
+            <!-- Distinct Bulk Import Card -->
+            <article class="bulk-import-card">
+              <div class="bulk-import-header">
+                <h3>Bulk JSON Import</h3>
+              </div>
+              <p class="bulk-import-desc">
+                Batch upload multiple questions at once using a standardized JSON file.
+              </p>
+              <div class="bulk-actions-row">
+                <label class="bulk-file-btn">
+                  <span>Upload JSON</span>
+                  <input id="bulk-import-file" class="bulk-import-input" type="file" accept="application/json,.json" />
+                </label>
+                <button class="bulk-template-link" type="button" data-action="bulk-import-template">Download sample template</button>
+              </div>
+            </article>
+          </aside>
+
+          <!-- Right Column: Library Feed -->
+          <main class="admin-main">
+            <div class="library-toolbar">
+              <div class="library-filters">
+                <div class="search-input-wrap">
+                  <input id="filter-search" type="search" placeholder="Search questions, options, explanation..." value="${escapeHtml(state.searchTerm)}" />
+                </div>
+                <select id="filter-subject" class="toolbar-select" aria-label="Filter by subject">
                   <option value="All">All subjects</option>
                   ${subjects.map((subject) => `<option value="${escapeHtml(subject)}" ${state.filterSubject === subject ? 'selected' : ''}>${escapeHtml(subject)}</option>`).join('')}
                 </select>
-                <select id="filter-theme" aria-label="Filter by theme">
+                <select id="filter-theme" class="toolbar-select" aria-label="Filter by theme">
                   <option value="All">All themes</option>
                   ${themes.map((theme) => `<option value="${theme}" ${state.filterTheme === theme ? 'selected' : ''}>${theme}</option>`).join('')}
                 </select>
               </div>
+              <div class="library-count" id="library-count-display">
+                Showing <strong>${visibleCount}</strong> of ${totalQuestions}
+              </div>
             </div>
-            <div class="question-list">
-              ${visibleQuestions.length ? visibleQuestions.map((question) => renderQuestionRow(question, state.editingId === question.id)).join('') : '<p class="subtle">No questions match the current filters.</p>'}
+
+            <div class="question-feed" id="question-feed-container">
+              ${visibleQuestions.length > 0
+                ? visibleQuestions.map((question) => renderQuestionRow(question, state.editingId === question.id)).join('')
+                : `
+                  <div class="empty-state-box">
+                    <h3>No matching questions</h3>
+                    <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
+                  </div>
+                `}
             </div>
-          </article>
+          </main>
         </section>
       </section>
     `;
@@ -729,6 +820,42 @@ export function bootAdmin(root: HTMLElement): void {
     if (select.id === 'filter-theme') {
       state.filterTheme = select.value as AdminState['filterTheme'];
       render();
+    }
+  });
+
+  root.addEventListener('input', (event) => {
+    const input = event.target as HTMLInputElement | null;
+    if (!input || input.id !== 'filter-search') {
+      return;
+    }
+
+    state.searchTerm = input.value;
+    const search = state.searchTerm.trim().toLowerCase();
+    const filtered = state.questions.filter((question) => {
+      const subjectMatch = state.filterSubject === 'All' || question.subject === state.filterSubject;
+      const themeMatch = state.filterTheme === 'All' || question.theme === state.filterTheme;
+      const searchMatch =
+        !search ||
+        question.question_text.toLowerCase().includes(search) ||
+        question.explanation.toLowerCase().includes(search) ||
+        question.options.some((opt) => opt.toLowerCase().includes(search));
+      return subjectMatch && themeMatch && searchMatch;
+    });
+
+    const feed = root.querySelector('#question-feed-container');
+    const countDisplay = root.querySelector('#library-count-display');
+    if (feed) {
+      feed.innerHTML = filtered.length > 0
+        ? filtered.map((q) => renderQuestionRow(q, state.editingId === q.id)).join('')
+        : `
+          <div class="empty-state-box">
+            <h3>No matching questions</h3>
+            <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
+          </div>
+        `;
+    }
+    if (countDisplay) {
+      countDisplay.innerHTML = `Showing <strong>${filtered.length}</strong> of ${state.questions.length}`;
     }
   });
 }

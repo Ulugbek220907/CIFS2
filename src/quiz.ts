@@ -221,8 +221,8 @@ export class QuizApp {
           <nav class="level-nav" aria-label="Quiz levels">
             <button class="level-tab ${currentLevel === 'CIFS' ? 'active' : ''}" type="button" data-action="level-select" data-level="CIFS">CIFS</button>
             <button class="level-tab ${currentLevel === 'Level 4' ? 'active' : ''}" type="button" data-action="level-select" data-level="Level 4">Level 4</button>
-            <button class="level-tab locked" type="button" disabled>Level 5 🔒</button>
-            <button class="level-tab locked" type="button" disabled>Level 6 🔒</button>
+            <button class="level-tab locked" type="button" disabled>Level 5 (Locked)</button>
+            <button class="level-tab locked" type="button" disabled>Level 6 (Locked)</button>
           </nav>
           <div class="subjects-grid">
             ${currentSubjects
