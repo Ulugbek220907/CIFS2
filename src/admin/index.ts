@@ -1,7 +1,8 @@
 import { supabase } from '../supabase';
 import { clearNode, escapeHtml } from '../dom';
 import { renderMathText } from '../math';
-import { getQuizThemeTitle, getSubjectThemes, resolveTheme, subjects, themes } from '../constants';
+import { getCustomThemeTitle, getQuizThemeTitle, getSubjectThemes, resolveTheme, subjects, themes } from '../constants';
+import { getAllCustomThemeTitles, initThemeTitles, setAllCustomThemeTitles } from '../themeTitles';
 import type { Question, Subject, Theme } from '../types';
 import 'katex/dist/katex.min.css';
 import '../admin.css';
@@ -19,6 +20,8 @@ interface AdminState {
   searchTerm: string;
   editingId: string | null;
   sidebarTab: 'single' | 'bulk';
+  themeManagerOpen: boolean;
+  themeManagerSubject: Subject;
 }
 
 interface QuestionFormValues {
@@ -383,6 +386,8 @@ export function bootAdmin(root: HTMLElement): void {
     searchTerm: '',
     editingId: null,
     sidebarTab: 'single',
+    themeManagerOpen: false,
+    themeManagerSubject: subjects[0],
   };
 
   const render = (): void => {
@@ -448,6 +453,10 @@ export function bootAdmin(root: HTMLElement): void {
             </div>
           </div>
           <div class="admin-session">
+            <button class="button secondary theme-mgr-btn" type="button" data-action="open-theme-manager" title="Manage custom names for themes">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:0.35rem;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              Manage Theme Names
+            </button>
             <span class="admin-user-pill">${escapeHtml(state.userEmail ?? '')}</span>
             <button class="button ghost" type="button" data-action="sign-out">Sign out</button>
           </div>
@@ -674,6 +683,53 @@ export function bootAdmin(root: HTMLElement): void {
           </main>
         </section>
       </section>
+      ${state.themeManagerOpen ? `
+        <div class="theme-modal-backdrop" id="theme-manager-modal" role="dialog" aria-modal="true" aria-labelledby="theme-modal-title">
+          <div class="theme-modal-card">
+            <div class="theme-modal-header">
+              <div>
+                <h2 id="theme-modal-title">Manage Theme Names</h2>
+                <p>Assign custom names to themes or leave blank to show default ("Theme 1", "Theme 2", etc.).</p>
+              </div>
+              <button class="theme-modal-close" type="button" data-action="close-theme-manager" aria-label="Close modal">&times;</button>
+            </div>
+            <form id="theme-manager-form">
+              <div class="theme-modal-body">
+                <div class="theme-manager-subject-select">
+                  <label for="theme-mgr-subject">Subject</label>
+                  <select id="theme-mgr-subject" name="manager_subject">
+                    ${subjects.map((s) => `<option value="${escapeHtml(s)}" ${state.themeManagerSubject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                  </select>
+                </div>
+
+                <div class="theme-grid-inputs">
+                  ${themes.map((t) => {
+                    const currentTitle = getCustomThemeTitle(state.themeManagerSubject, t);
+                    return `
+                      <div class="theme-input-item">
+                        <label for="theme-input-${t.replace(/\s+/g, '-')}">
+                          <span>${t}</span>
+                        </label>
+                        <input
+                          id="theme-input-${t.replace(/\s+/g, '-')}"
+                          type="text"
+                          name="${t}"
+                          value="${escapeHtml(currentTitle)}"
+                          placeholder="Default (${t})"
+                        />
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+              <div class="theme-modal-footer">
+                <button class="button ghost" type="button" data-action="close-theme-manager">Cancel</button>
+                <button class="button primary" type="submit" id="btn-save-themes">Save Theme Names</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ` : ''}
     `;
 
     if (state.editingId) {
@@ -738,6 +794,7 @@ export function bootAdmin(root: HTMLElement): void {
       return;
     }
 
+    initThemeTitles();
     state.phase = 'dashboard';
     state.userEmail = user.email ?? null;
     await refresh();
@@ -819,6 +876,37 @@ export function bootAdmin(root: HTMLElement): void {
           errP.className = 'feedback bad';
           errP.innerHTML = `<strong>Error</strong><span>${escapeHtml(msg)}</span>`;
           form.appendChild(errP);
+        });
+      return;
+    }
+
+    if (form.id === 'theme-manager-form') {
+      event.preventDefault();
+      const data = new FormData(form);
+      const titlesMap: Record<string, string> = {};
+      for (const t of themes) {
+        titlesMap[t] = String(data.get(t) ?? '').trim();
+      }
+
+      const saveBtn = form.querySelector<HTMLButtonElement>('#btn-save-themes');
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+      }
+
+      void setAllCustomThemeTitles(state.themeManagerSubject, titlesMap)
+        .then(() => {
+          state.themeManagerOpen = false;
+          showToast(`Theme names saved for ${state.themeManagerSubject}!`, 'success');
+          render();
+        })
+        .catch((err: unknown) => {
+          if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Theme Names';
+          }
+          const msg = err instanceof Error ? err.message : 'Failed to save theme names.';
+          showToast(msg, 'error');
         });
       return;
     }
@@ -1035,6 +1123,13 @@ export function bootAdmin(root: HTMLElement): void {
     if (select.id === 'filter-theme') {
       state.filterTheme = select.value as AdminState['filterTheme'];
       updateFeedView(state, root);
+      return;
+    }
+
+    if (select.id === 'theme-mgr-subject') {
+      state.themeManagerSubject = select.value as Subject;
+      render();
+      return;
     }
   });
 
@@ -1044,8 +1139,26 @@ export function bootAdmin(root: HTMLElement): void {
       return;
     }
 
+    if (target.classList.contains('theme-modal-backdrop')) {
+      state.themeManagerOpen = false;
+      render();
+      return;
+    }
+
     const action = target.closest<HTMLElement>('[data-action]');
     if (!action) {
+      return;
+    }
+
+    if (action.dataset.action === 'open-theme-manager') {
+      state.themeManagerOpen = true;
+      render();
+      return;
+    }
+
+    if (action.dataset.action === 'close-theme-manager') {
+      state.themeManagerOpen = false;
+      render();
       return;
     }
 

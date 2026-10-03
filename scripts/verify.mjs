@@ -23,7 +23,7 @@ test('Constants: cifsSubjects, level4Subjects, subjects', async () => {
 });
 
 test('Abbreviation mapping in subjectShortName', async () => {
-  const { subjectShortName, getQuizThemeTitle } = await import('../src/constants.ts');
+  const { subjectShortName, getQuizThemeTitle, updateCustomThemeTitlesCache } = await import('../src/constants.ts');
 
   assert.equal(subjectShortName('Quantitative Methods'), 'QM');
   assert.equal(subjectShortName('Academic Communication Skills'), 'ACS');
@@ -41,68 +41,67 @@ test('Abbreviation mapping in subjectShortName', async () => {
   assert.equal(subjectShortName('Fundamentals of Statistics'), 'FoS');
   assert.equal(subjectShortName('Essentials of Economics'), 'EoE');
 
-  // getQuizThemeTitle
+  // Default theme titles (when blank, defaults to Theme 1, Theme 2, etc.)
   assert.equal(getQuizThemeTitle('Quantitative Methods', 'Theme 1'), 'Theme 1');
   assert.equal(getQuizThemeTitle(undefined, 'Theme 1'), 'Theme 1');
-  assert.equal(getQuizThemeTitle('Quantitative Methods', 'Theme 2'), 'Theme 2');
-  assert.equal(getQuizThemeTitle('Math for Eco', 'Theme 1'), 'Theme 1');
+  assert.equal(getQuizThemeTitle('Financial Accounting', 'Theme 1'), 'Theme 1');
 
-  // getQuizThemeTitle for FA, FoS, EoE
+  // Dynamic custom titles
+  updateCustomThemeTitlesCache({
+    'Financial Accounting': {
+      'Theme 1': 'Intro to Accounting',
+      'Theme 2': 'Accounting Cycle',
+      'Theme 3': 'Accounting Cycle 2',
+    },
+    'Fundamentals of Statistics': {
+      'Theme 1': 'Intro to Statistics',
+    },
+    'Essentials of Economics': {
+      'Theme 1': '10 principles of economics',
+    },
+  });
+
   assert.equal(getQuizThemeTitle('Financial Accounting', 'Theme 1'), 'Intro to Accounting');
   assert.equal(getQuizThemeTitle('Financial Accounting', 'Theme 2'), 'Accounting Cycle');
   assert.equal(getQuizThemeTitle('Financial Accounting', 'Theme 3'), 'Accounting Cycle 2');
-
   assert.equal(getQuizThemeTitle('Fundamentals of Statistics', 'Theme 1'), 'Intro to Statistics');
-  assert.equal(getQuizThemeTitle('Fundamentals of Statistics', 'Theme 2'), 'Probability topics');
-  assert.equal(getQuizThemeTitle('Fundamentals of Statistics', 'Theme 3'), 'Discrete Probability Distributions');
-  assert.equal(getQuizThemeTitle('Fundamentals of Statistics', 'Theme 4'), 'Continuous Probability Distributions');
-
   assert.equal(getQuizThemeTitle('Essentials of Economics', 'Theme 1'), '10 principles of economics');
-  assert.equal(getQuizThemeTitle('Essentials of Economics', 'Theme 2'), 'The market forces of supply and demand');
-  assert.equal(getQuizThemeTitle('Essentials of Economics', 'Theme 3'), 'Elasticity');
-  assert.equal(getQuizThemeTitle('Essentials of Economics', 'Theme 4'), 'Consumers, Producers, and the efficiency of markets');
-  assert.equal(getQuizThemeTitle('Essentials of Economics', 'Theme 5'), 'The data on macroeconomics');
-  assert.equal(getQuizThemeTitle('Essentials of Economics', 'Theme 6'), 'Production and growth');
+  assert.equal(getQuizThemeTitle('Financial Accounting', 'Theme 4'), 'Theme 4');
 });
 
 test('Subject theme counts and options in getSubjectThemes & resolveTheme', async () => {
-  const { getSubjectThemes, resolveTheme } = await import('../src/constants.ts');
+  const { getSubjectThemes, resolveTheme, subjects } = await import('../src/constants.ts');
 
+  // Verify all 12 subjects have all 12 themes
+  assert.equal(subjects.length, 12, 'Total 12 subjects (6 CIFS + 6 Level 4)');
+  for (const subject of subjects) {
+    const subjectThemes = getSubjectThemes(subject);
+    assert.equal(subjectThemes.length, 12, `${subject} must have 12 themes`);
+    assert.equal(subjectThemes[0].theme, 'Theme 1');
+    assert.equal(subjectThemes[11].theme, 'Theme 12');
+  }
+
+  // Dynamic theme titles reflected in getSubjectThemes
   const faThemes = getSubjectThemes('Financial Accounting');
-  assert.equal(faThemes.length, 3);
+  assert.equal(faThemes.length, 12);
   assert.equal(faThemes[0].theme, 'Theme 1');
   assert.equal(faThemes[0].title, 'Intro to Accounting');
+  assert.equal(faThemes[0].hasCustomTitle, true);
   assert.equal(faThemes[1].theme, 'Theme 2');
   assert.equal(faThemes[1].title, 'Accounting Cycle');
-  assert.equal(faThemes[2].theme, 'Theme 3');
-  assert.equal(faThemes[2].title, 'Accounting Cycle 2');
-
-  const fosThemes = getSubjectThemes('Fundamentals of Statistics');
-  assert.equal(fosThemes.length, 4);
-  assert.equal(fosThemes[0].title, 'Intro to Statistics');
-  assert.equal(fosThemes[1].title, 'Probability topics');
-  assert.equal(fosThemes[2].title, 'Discrete Probability Distributions');
-  assert.equal(fosThemes[3].title, 'Continuous Probability Distributions');
-
-  const eoeThemes = getSubjectThemes('Essentials of Economics');
-  assert.equal(eoeThemes.length, 6);
-  assert.equal(eoeThemes[0].title, '10 principles of economics');
-  assert.equal(eoeThemes[1].title, 'The market forces of supply and demand');
-  assert.equal(eoeThemes[2].title, 'Elasticity');
-  assert.equal(eoeThemes[3].title, 'Consumers, Producers, and the efficiency of markets');
-  assert.equal(eoeThemes[4].title, 'The data on macroeconomics');
-  assert.equal(eoeThemes[5].title, 'Production and growth');
-
-  const meThemes = getSubjectThemes('Math for Eco');
-  assert.equal(meThemes.length, 12);
+  assert.equal(faThemes[1].hasCustomTitle, true);
+  assert.equal(faThemes[3].theme, 'Theme 4');
+  assert.equal(faThemes[3].title, 'Theme 4');
+  assert.equal(faThemes[3].hasCustomTitle, false);
 
   // resolveTheme
   assert.equal(resolveTheme('Financial Accounting', 'Intro to Accounting'), 'Theme 1');
-  assert.equal(resolveTheme('Financial Accounting', '1. Intro to Accounting'), 'Theme 1');
   assert.equal(resolveTheme('Financial Accounting', 'Accounting Cycle 2'), 'Theme 3');
   assert.equal(resolveTheme('Financial Accounting', 'Theme 2'), 'Theme 2');
-  assert.equal(resolveTheme('Fundamentals of Statistics', 'Continuous Probability Distributions'), 'Theme 4');
+  assert.equal(resolveTheme('Financial Accounting', 'Theme 12'), 'Theme 12');
+  assert.equal(resolveTheme('Fundamentals of Statistics', 'Intro to Statistics'), 'Theme 1');
   assert.equal(resolveTheme('Essentials of Economics', '10 principles of economics'), 'Theme 1');
+  assert.equal(resolveTheme('Math for Eco', 'Theme 5'), 'Theme 5');
 });
 
 test('Sample questions JSON schema and content', () => {

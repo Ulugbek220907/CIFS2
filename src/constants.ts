@@ -77,53 +77,53 @@ export interface SubjectThemeOption {
   theme: Theme;
   title: string;
   themeNumber: number;
+  hasCustomTitle: boolean;
 }
 
-export const subjectThemeTitles: Partial<Record<Subject, Partial<Record<Theme, string>>>> = {
-  'Financial Accounting': {
-    'Theme 1': 'Intro to Accounting',
-    'Theme 2': 'Accounting Cycle',
-    'Theme 3': 'Accounting Cycle 2',
-  },
-  'Fundamentals of Statistics': {
-    'Theme 1': 'Intro to Statistics',
-    'Theme 2': 'Probability topics',
-    'Theme 3': 'Discrete Probability Distributions',
-    'Theme 4': 'Continuous Probability Distributions',
-  },
-  'Essentials of Economics': {
-    'Theme 1': '10 principles of economics',
-    'Theme 2': 'The market forces of supply and demand',
-    'Theme 3': 'Elasticity',
-    'Theme 4': 'Consumers, Producers, and the efficiency of markets',
-    'Theme 5': 'The data on macroeconomics',
-    'Theme 6': 'Production and growth',
-  },
-};
+const STORAGE_KEY = 'cifs_theme_titles';
 
-export const subjectThemeCount: Partial<Record<Subject, number>> = {
-  'Financial Accounting': 3,
-  'Fundamentals of Statistics': 4,
-  'Essentials of Economics': 6,
-};
+type ThemeTitlesMap = Record<string, Record<string, string>>;
+
+let customTitlesCache: ThemeTitlesMap = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        return JSON.parse(raw) as ThemeTitlesMap;
+      }
+    }
+  } catch {
+    // Ignore storage errors in test or SSR environments
+  }
+  return {};
+})();
+
+export function updateCustomThemeTitlesCache(titlesMap: ThemeTitlesMap): void {
+  customTitlesCache = { ...titlesMap };
+}
+
+export function getCustomThemeTitle(subject?: Subject, theme?: Theme): string {
+  if (!subject || !theme) return '';
+  return customTitlesCache[subject]?.[theme]?.trim() ?? '';
+}
 
 export function getSubjectThemes(subject?: Subject): SubjectThemeOption[] {
-  const count = subject && subjectThemeCount[subject] ? subjectThemeCount[subject]! : themes.length;
-  const list = themes.slice(0, count);
-  return list.map((theme, index) => {
+  return themes.map((theme, index) => {
     const themeNumber = index + 1;
-    const customTitle = subject ? subjectThemeTitles[subject]?.[theme] : undefined;
+    const customTitle = getCustomThemeTitle(subject, theme);
     return {
       theme,
       themeNumber,
-      title: customTitle ?? theme,
+      title: customTitle || theme,
+      hasCustomTitle: Boolean(customTitle),
     };
   });
 }
 
 export function getQuizThemeTitle(subject?: Subject, theme?: Theme): string {
-  if (subject && theme && subjectThemeTitles[subject]?.[theme]) {
-    return subjectThemeTitles[subject]![theme]!;
+  const custom = getCustomThemeTitle(subject, theme);
+  if (custom) {
+    return custom;
   }
   return theme ?? 'Theme 1';
 }
@@ -133,15 +133,15 @@ export function resolveTheme(subject: Subject | undefined, input: string): Theme
   if ((themes as readonly string[]).includes(trimmed)) {
     return trimmed as Theme;
   }
-  if (subject && subjectThemeTitles[subject]) {
-    const titles = subjectThemeTitles[subject]!;
-    for (const [t, title] of Object.entries(titles)) {
-      if (title.toLowerCase() === trimmed.toLowerCase()) {
-        return t as Theme;
+  if (subject) {
+    for (const t of themes) {
+      const custom = getCustomThemeTitle(subject, t);
+      if (custom && custom.toLowerCase() === trimmed.toLowerCase()) {
+        return t;
       }
       const stripped = trimmed.replace(/^\d+[\.\)]\s*/, '');
-      if (title.toLowerCase() === stripped.toLowerCase()) {
-        return t as Theme;
+      if (custom && custom.toLowerCase() === stripped.toLowerCase()) {
+        return t;
       }
     }
   }

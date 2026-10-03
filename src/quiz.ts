@@ -12,6 +12,7 @@ import {
   subjects,
   themes,
 } from './constants';
+import { initThemeTitles, syncThemeTitlesFromRemote } from './themeTitles';
 import { readLocal, readSession, writeLocal, writeSession } from './storage';
 import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
 
@@ -192,10 +193,16 @@ export class QuizApp {
   }
 
   mount(): void {
+    initThemeTitles();
     document.body.classList.remove('quiz-fullscreen');
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('submit', this.handleSubmit);
     this.render();
+    void syncThemeTitlesFromRemote().then(() => {
+      if (this.state.phase === 'setup') {
+        this.render();
+      }
+    });
   }
 
   destroy(): void {
@@ -269,12 +276,12 @@ export class QuizApp {
           <div class="theme-options">
             ${getSubjectThemes(activeSubject ?? config.subject)
               .map((item) => {
-                const hasCustomTitle = item.title !== item.theme;
+                const hasCustomTitle = item.hasCustomTitle;
                 return `
                   <button class="theme-btn" type="button" data-action="theme-select" data-theme="${item.theme}">
                     <div class="theme-btn-content">
                       ${hasCustomTitle ? `<span class="theme-btn-tag">${item.theme}</span>` : ''}
-                      <span class="theme-btn-title">${escapeHtml(hasCustomTitle ? `${item.themeNumber}. ${item.title}` : item.theme)}</span>
+                      <span class="theme-btn-title">${escapeHtml(hasCustomTitle ? item.title : item.theme)}</span>
                     </div>
                     <span class="theme-btn-arrow" aria-hidden="true">→</span>
                   </button>
