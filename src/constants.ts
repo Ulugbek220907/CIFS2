@@ -13,6 +13,9 @@ export const level4Subjects: Subject[] = [
   'Math for Eco',
   'Exploring Economics',
   'Contemporary Issues in Global Economy',
+  'Financial Accounting',
+  'Fundamentals of Statistics',
+  'Essentials of Economics',
 ];
 
 export const subjects: Subject[] = [...cifsSubjects, ...level4Subjects];
@@ -61,6 +64,12 @@ export function subjectShortName(subject: Subject): string {
       return 'EE';
     case 'Contemporary Issues in Global Economy':
       return 'CIGE';
+    case 'Financial Accounting':
+      return 'FA';
+    case 'Fundamentals of Statistics':
+      return 'FoS';
+    case 'Essentials of Economics':
+      return 'EoE';
   }
 }
 

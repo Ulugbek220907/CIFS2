@@ -1,7 +1,9 @@
 import { supabase } from '../supabase';
 import { clearNode, escapeHtml } from '../dom';
+import { renderMathText } from '../math';
 import { subjects, themes } from '../constants';
 import type { Question, Subject, Theme } from '../types';
+import 'katex/dist/katex.min.css';
 import '../admin.css';
 
 type AdminPhase = 'loading' | 'login' | 'dashboard';
@@ -251,7 +253,7 @@ function renderQuestionRow(question: Question, isEditing: boolean): string {
           <button class="action-btn-sm danger" type="button" data-action="delete-question" data-id="${question.id}">Delete</button>
         </div>
       </div>
-      <div class="question-prompt">${escapeHtml(question.question_text)}</div>
+      <div class="question-prompt">${renderMathText(question.question_text)}</div>
       <div class="question-options-list">
         ${question.options
           .map((option, index) => {
@@ -259,7 +261,7 @@ function renderQuestionRow(question: Question, isEditing: boolean): string {
             const letter = letters[index] ?? '';
             return `
               <div class="question-option-item ${isCorrect ? 'correct' : ''}">
-                <span><strong>${letter}.</strong> ${escapeHtml(option)}</span>
+                <span><strong>${letter}.</strong> ${renderMathText(option)}</span>
                 ${isCorrect ? '<span class="correct-badge">Correct</span>' : ''}
               </div>
             `;
@@ -267,7 +269,7 @@ function renderQuestionRow(question: Question, isEditing: boolean): string {
           .join('')}
       </div>
       <div class="question-explanation-box">
-        <strong>Explanation:</strong> ${escapeHtml(question.explanation)}
+        <strong>Explanation:</strong> ${renderMathText(question.explanation)}
       </div>
     </article>
   `;
@@ -1038,6 +1040,30 @@ export function bootAdmin(root: HTMLElement): void {
       "options": ["Isolationist policies", "Increased international integration and trade", "Fixed currency standards only", "Reduction in digital communication"],
       "correct_index": 1,
       "explanation": "Globalization involves increased international flow of trade, capital, information, and people."
+    },
+    {
+      "subject": "Financial Accounting",
+      "theme": "Theme 1",
+      "question_text": "What is the fundamental accounting equation?",
+      "options": ["Assets = Liabilities + Equity", "Assets = Liabilities - Equity", "Revenue = Expenses + Profit", "Net Income = Dividends + Retained Earnings"],
+      "correct_index": 0,
+      "explanation": "The fundamental accounting equation is Assets = Liabilities + Equity."
+    },
+    {
+      "subject": "Fundamentals of Statistics",
+      "theme": "Theme 1",
+      "question_text": "What is the measure of the spread or dispersion of a dataset relative to its mean?",
+      "options": ["Mean", "Median", "Standard deviation", "Mode"],
+      "correct_index": 2,
+      "explanation": "Standard deviation measures the spread or dispersion of data values relative to their mean."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 1",
+      "question_text": "What does opportunity cost represent?",
+      "options": ["The monetary price paid for a good", "The value of the next best alternative forgone", "The total accounting cost incurred", "The sunk cost of past investments"],
+      "correct_index": 1,
+      "explanation": "Opportunity cost is the value of the next best alternative forgone when making a decision."
     }
   ]
 }`;

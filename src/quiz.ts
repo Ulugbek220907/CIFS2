@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from './supabase';
 import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } from './dom';
+import { renderMathText } from './math';
 import {
   cifsSubjects,
   getQuizThemeTitle,
@@ -291,7 +292,7 @@ export class QuizApp {
           </div>
         </div>
         <article class="question-card">
-          <div class="question-text">${escapeHtml(question.question_text)}</div>
+          <div class="question-text">${renderMathText(question.question_text)}</div>
           <div class="options-grid">
             ${question.options
               .map((option, index) => {
@@ -307,7 +308,7 @@ export class QuizApp {
                   .filter(Boolean)
                   .join(' ');
 
-                return `<button class="${className}" type="button" data-option-index="${index}" ${this.state.review ? 'disabled' : ''}>${escapeHtml(option)}</button>`;
+                return `<button class="${className}" type="button" data-option-index="${index}" ${this.state.review ? 'disabled' : ''}>${renderMathText(option)}</button>`;
               })
               .join('')}
           </div>
@@ -321,7 +322,7 @@ export class QuizApp {
           </div>
           ${
             this.state.review
-              ? `<div class="feedback ${this.state.review.isCorrect ? 'good' : 'bad'}"><strong>${this.state.review.isCorrect ? 'Correct' : 'Incorrect'}</strong><p>${escapeHtml(this.state.review.explanation)}</p></div>`
+              ? `<div class="feedback ${this.state.review.isCorrect ? 'good' : 'bad'}"><strong>${this.state.review.isCorrect ? 'Correct' : 'Incorrect'}</strong><p>${renderMathText(this.state.review.explanation)}</p></div>`
               : '<p class="subtle">Select one option, then submit to reveal the correct answer immediately.</p>'
           }
         </article>

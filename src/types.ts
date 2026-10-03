@@ -9,7 +9,10 @@ export type CifsSubject =
 export type Level4Subject =
   | 'Math for Eco'
   | 'Exploring Economics'
-  | 'Contemporary Issues in Global Economy';
+  | 'Contemporary Issues in Global Economy'
+  | 'Financial Accounting'
+  | 'Fundamentals of Statistics'
+  | 'Essentials of Economics';
 
 export type LegacySubject = 'Foundations of Economics';
 

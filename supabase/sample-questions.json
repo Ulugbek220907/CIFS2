@@ -63,6 +63,30 @@
       "options": ["Isolationist policies", "Increased international integration and trade", "Fixed currency standards only", "Reduction in digital communication"],
       "correct_index": 1,
       "explanation": "Globalization involves increased international flow of trade, capital, information, and people."
+    },
+    {
+      "subject": "Financial Accounting",
+      "theme": "Theme 1",
+      "question_text": "What is the fundamental accounting equation?",
+      "options": ["Assets = Liabilities + Equity", "Assets = Liabilities - Equity", "Revenue = Expenses + Profit", "Net Income = Dividends + Retained Earnings"],
+      "correct_index": 0,
+      "explanation": "The fundamental accounting equation is Assets = Liabilities + Equity."
+    },
+    {
+      "subject": "Fundamentals of Statistics",
+      "theme": "Theme 1",
+      "question_text": "What is the measure of the spread or dispersion of a dataset relative to its mean?",
+      "options": ["Mean", "Median", "Standard deviation", "Mode"],
+      "correct_index": 2,
+      "explanation": "Standard deviation measures the spread or dispersion of data values relative to their mean."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 1",
+      "question_text": "What does opportunity cost represent?",
+      "options": ["The monetary price paid for a good", "The value of the next best alternative forgone", "The total accounting cost incurred", "The sunk cost of past investments"],
+      "correct_index": 1,
+      "explanation": "Opportunity cost is the value of the next best alternative forgone when making a decision."
     }
   ]
 }
