@@ -1,5 +1,6 @@
 import { clearNode, escapeHtml } from './dom';
 import { QuizApp } from './quiz';
+import { trackPageVisit } from './telemetry';
 
 let activeQuiz: QuizApp | null = null;
 let mountedRoot: HTMLElement | null = null;
@@ -118,6 +119,7 @@ export function bootApp(root: HTMLElement | null): void {
   }
 
   mountedRoot = root;
+  trackPageVisit();
   document.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     if (!target) {

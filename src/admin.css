@@ -1589,4 +1589,641 @@
   transition: all 0.15s ease;
 }
 
+/* ==========================================================================
+   Student Telemetry Command Center & Funnel
+   ========================================================================== */
+.admin-telemetry-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.35rem;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.admin-telemetry-panel:hover {
+  border-color: #cbd5e1;
+  box-shadow: var(--shadow-md);
+}
+
+.telemetry-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.telemetry-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.telemetry-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #059669;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  width: fit-content;
+  margin-bottom: 0.2rem;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: livePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes livePulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.telemetry-title-block h2 {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text-dark);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.telemetry-title-block p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.telemetry-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.telemetry-time-range-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--panel-muted, #f1f5f9);
+  padding: 0.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  gap: 0.2rem;
+}
+
+.telemetry-range-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.telemetry-range-btn:hover {
+  color: var(--text-dark);
+}
+
+.telemetry-range-btn.active {
+  background: #ffffff;
+  color: var(--primary, #4f46e5);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-weight: 700;
+}
+
+.telemetry-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--panel-muted, #f1f5f9);
+  color: var(--text-dark);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.telemetry-refresh-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+.telemetry-refresh-btn.is-loading svg {
+  animation: spin 1s linear infinite;
+}
+
+.telemetry-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Notice / Error State */
+.telemetry-notice-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1.15rem;
+  color: #92400e;
+}
+
+.telemetry-notice-icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.telemetry-notice-content strong {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #78350f;
+  margin-bottom: 0.25rem;
+}
+
+.telemetry-notice-content p {
+  font-size: 0.8rem;
+  margin: 0 0 0.25rem;
+  line-height: 1.4;
+}
+
+.telemetry-notice-help {
+  font-size: 0.775rem !important;
+  color: #b45309;
+}
+
+.telemetry-notice-help code {
+  background: rgba(180, 83, 9, 0.1);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+/* 4 Executive KPI Cards */
+.telemetry-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.telemetry-kpi-card {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  position: relative;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.telemetry-kpi-card:hover {
+  transform: translateY(-1px);
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);
+}
+
+.kpi-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.kpi-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.kpi-icon-badge {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.kpi-icon-badge.kpi-visitors {
+  background: rgba(79, 70, 229, 0.1);
+  color: #4f46e5;
+}
+
+.kpi-icon-badge.kpi-starts {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
+.kpi-icon-badge.kpi-completions {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.kpi-icon-badge.kpi-performance {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+}
+
+.kpi-main-metric {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.kpi-number {
+  font-size: 1.85rem;
+  font-weight: 800;
+  color: var(--text-dark);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.kpi-unit {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.kpi-subtext {
+  font-size: 0.775rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.kpi-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.kpi-accent-text {
+  font-weight: 700;
+  color: var(--primary, #4f46e5);
+}
+
+.kpi-accent-text.positive {
+  color: #059669;
+}
+
+/* Visual Conversion Funnel */
+.telemetry-funnel-card {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.15rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.funnel-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.funnel-title {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text-dark);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.funnel-subtitle {
+  font-size: 0.775rem;
+  color: var(--text-muted);
+  margin: 0.15rem 0 0;
+}
+
+.funnel-summary-badge {
+  font-size: 0.8rem;
+  color: var(--text-dark);
+  background: var(--panel-muted, #f1f5f9);
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+}
+
+.funnel-summary-badge strong {
+  color: #059669;
+  font-weight: 800;
+}
+
+.telemetry-funnel-stages {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.funnel-stage-item {
+  flex: 1;
+  min-width: 0;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  transition: transform 0.15s ease;
+}
+
+.funnel-stage-item:hover {
+  transform: translateY(-1px);
+}
+
+.funnel-stage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.funnel-step-num {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.funnel-stage-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-dark);
+  flex: 1;
+  margin-left: 0.25rem;
+}
+
+.funnel-stage-count {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text-dark);
+}
+
+.funnel-bar-track {
+  width: 100%;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.funnel-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+
+.funnel-bar-fill.stage-1-fill {
+  background: linear-gradient(90deg, #3b82f6 0%, #4f46e5 100%);
+}
+
+.funnel-bar-fill.stage-2-fill {
+  background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%);
+}
+
+.funnel-bar-fill.stage-3-fill {
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+}
+
+.funnel-stage-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.funnel-rate-tag {
+  font-weight: 700;
+  color: var(--text-dark);
+}
+
+.funnel-dropoff-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #e11d48;
+  background: rgba(225, 29, 72, 0.08);
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.funnel-dropoff-tag.zero {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.funnel-dropoff-tag.high {
+  background: rgba(225, 29, 72, 0.15);
+  font-weight: 700;
+}
+
+.funnel-stage-arrow {
+  color: #94a3b8;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Subject Breakdown Card & Table */
+.telemetry-breakdown-card {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.telemetry-breakdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.breakdown-title {
+  font-size: 0.925rem;
+  font-weight: 800;
+  color: var(--text-dark);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.breakdown-subtitle {
+  font-size: 0.775rem;
+  color: var(--text-muted);
+  margin: 0.15rem 0 0;
+}
+
+.telemetry-breakdown-toggle {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.telemetry-breakdown-body {
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+}
+
+.telemetry-table-wrapper {
+  overflow-x: auto;
+}
+
+.telemetry-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.telemetry-table th {
+  padding: 0.65rem 0.85rem;
+  background: #f8fafc;
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.telemetry-table td {
+  padding: 0.75rem 0.85rem;
+  border-bottom: 1px solid #f1f5f9;
+  color: var(--text-dark);
+}
+
+.telemetry-table tr:hover td {
+  background: #f8fafc;
+}
+
+.telemetry-table .num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.subject-name-cell {
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.theme-pill {
+  font-size: 0.75rem;
+  background: var(--panel-muted, #f1f5f9);
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  color: #334155;
+  display: inline-block;
+}
+
+.badge-success {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.badge-neutral {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid var(--border);
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.telemetry-empty-breakdown {
+  text-align: center;
+  padding: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .telemetry-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .telemetry-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .telemetry-funnel-stages {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .funnel-stage-arrow {
+    transform: rotate(90deg);
+    padding: 0.25rem 0;
+  }
+}
+
+
 

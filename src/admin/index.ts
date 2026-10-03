@@ -9,6 +9,51 @@ import '../admin.css';
 
 type AdminPhase = 'loading' | 'login' | 'dashboard';
 
+export type AnalyticsTimeRange = 'all' | '7d' | 'today';
+
+export interface AnalyticsEvent {
+  id: string;
+  event_type: 'page_visit' | 'quiz_start' | 'quiz_complete';
+  session_id: string;
+  subject?: Subject | null;
+  theme?: Theme | null;
+  score?: number | null;
+  total_questions?: number | null;
+  time_taken_seconds?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AnalyticsKpis {
+  totalVisitors: number;
+  totalVisits: number;
+  quizzesStarted: number;
+  quizzesCompleted: number;
+  completionRate: number;
+  avgScore: number | null;
+  avgTimeSeconds: number | null;
+}
+
+export interface FunnelStage {
+  stage: string;
+  count: number;
+  rate: number;
+  dropOff: number;
+}
+
+export interface SubjectBreakdownItem {
+  subject: string;
+  starts: number;
+  completions: number;
+  completionRate: number;
+  themes: {
+    theme: string;
+    starts: number;
+    completions: number;
+    completionRate: number;
+  }[];
+}
+
 interface AdminState {
   phase: AdminPhase;
   userEmail: string | null;
@@ -22,6 +67,11 @@ interface AdminState {
   sidebarTab: 'single' | 'bulk';
   themeManagerOpen: boolean;
   themeManagerSubject: Subject;
+  analyticsEvents: AnalyticsEvent[];
+  analyticsLoading: boolean;
+  analyticsError: string | null;
+  analyticsTimeRange: AnalyticsTimeRange;
+  showSubjectBreakdown: boolean;
 }
 
 interface QuestionFormValues {
@@ -102,6 +152,139 @@ function getFilterThemeOptions(filterSubject: Subject | 'All', selectedTheme: Th
 function getThemeBadgeLabel(subject: Subject, theme: Theme): string {
   const title = getQuizThemeTitle(subject, theme);
   return title !== theme ? `${theme}: ${title}` : theme;
+}
+
+export function computeAnalyticsKpis(events: AnalyticsEvent[]): AnalyticsKpis {
+  const pageVisits = events.filter((e) => e.event_type === 'page_visit');
+  const quizStarts = events.filter((e) => e.event_type === 'quiz_start');
+  const quizCompletes = events.filter((e) => e.event_type === 'quiz_complete');
+
+  const totalVisitors = new Set(pageVisits.map((e) => e.session_id)).size;
+  const totalVisits = pageVisits.length;
+  const quizzesStarted = quizStarts.length;
+  const quizzesCompleted = quizCompletes.length;
+
+  const completionRate = quizzesStarted > 0 ? (quizzesCompleted / quizzesStarted) * 100 : 0;
+
+  let avgScore: number | null = null;
+  let avgTimeSeconds: number | null = null;
+
+  if (quizCompletes.length > 0) {
+    const scored = quizCompletes.filter((e) => typeof e.score === 'number' && e.score !== null);
+    if (scored.length > 0) {
+      const sumScore = scored.reduce((sum, e) => sum + (e.score ?? 0), 0);
+      avgScore = Number((sumScore / scored.length).toFixed(1));
+    }
+    const timed = quizCompletes.filter((e) => typeof e.time_taken_seconds === 'number' && e.time_taken_seconds !== null);
+    if (timed.length > 0) {
+      const sumTime = timed.reduce((sum, e) => sum + (e.time_taken_seconds ?? 0), 0);
+      avgTimeSeconds = Math.round(sumTime / timed.length);
+    }
+  }
+
+  return {
+    totalVisitors,
+    totalVisits,
+    quizzesStarted,
+    quizzesCompleted,
+    completionRate: Number(completionRate.toFixed(1)),
+    avgScore,
+    avgTimeSeconds,
+  };
+}
+
+export function computeAnalyticsFunnel(events: AnalyticsEvent[], kpis: AnalyticsKpis): FunnelStage[] {
+  const visitors = kpis.totalVisitors;
+  const starts = kpis.quizzesStarted;
+  const completions = kpis.quizzesCompleted;
+
+  const stage1: FunnelStage = {
+    stage: 'Entered Webpage',
+    count: visitors,
+    rate: 100,
+    dropOff: 0,
+  };
+
+  const startRate = visitors > 0 ? (starts / visitors) * 100 : 0;
+  const startDropOff = visitors > 0 ? Math.max(0, 100 - startRate) : 0;
+  const stage2: FunnelStage = {
+    stage: 'Started Quiz',
+    count: starts,
+    rate: Number(startRate.toFixed(1)),
+    dropOff: Number(startDropOff.toFixed(1)),
+  };
+
+  const completionRate = starts > 0 ? (completions / starts) * 100 : 0;
+  const completionDropOff = starts > 0 ? Math.max(0, 100 - completionRate) : 0;
+  const stage3: FunnelStage = {
+    stage: 'Ended Quiz',
+    count: completions,
+    rate: Number(completionRate.toFixed(1)),
+    dropOff: Number(completionDropOff.toFixed(1)),
+  };
+
+  return [stage1, stage2, stage3];
+}
+
+export function computeSubjectBreakdown(events: AnalyticsEvent[]): SubjectBreakdownItem[] {
+  const subjectMap = new Map<string, {
+    subject: string;
+    starts: number;
+    completions: number;
+    themes: Map<string, { theme: string; starts: number; completions: number }>;
+  }>();
+
+  for (const event of events) {
+    if (!event.subject) continue;
+    const sub = event.subject;
+
+    if (!subjectMap.has(sub)) {
+      subjectMap.set(sub, {
+        subject: sub,
+        starts: 0,
+        completions: 0,
+        themes: new Map(),
+      });
+    }
+
+    const item = subjectMap.get(sub)!;
+    const themeKey = event.theme || 'Theme 1';
+
+    if (!item.themes.has(themeKey)) {
+      item.themes.set(themeKey, { theme: themeKey, starts: 0, completions: 0 });
+    }
+    const themeItem = item.themes.get(themeKey)!;
+
+    if (event.event_type === 'quiz_start') {
+      item.starts++;
+      themeItem.starts++;
+    } else if (event.event_type === 'quiz_complete') {
+      item.completions++;
+      themeItem.completions++;
+    }
+  }
+
+  const breakdown: SubjectBreakdownItem[] = Array.from(subjectMap.values()).map((sub) => {
+    const compRate = sub.starts > 0 ? (sub.completions / sub.starts) * 100 : 0;
+    const themesArray = Array.from(sub.themes.values()).map((t) => ({
+      theme: t.theme,
+      starts: t.starts,
+      completions: t.completions,
+      completionRate: t.starts > 0 ? Number(((t.completions / t.starts) * 100).toFixed(1)) : 0,
+    }));
+    themesArray.sort((a, b) => b.starts - a.starts);
+
+    return {
+      subject: sub.subject,
+      starts: sub.starts,
+      completions: sub.completions,
+      completionRate: Number(compRate.toFixed(1)),
+      themes: themesArray,
+    };
+  });
+
+  breakdown.sort((a, b) => b.starts - a.starts);
+  return breakdown;
 }
 
 function normalizeBulkImportPayload(parsed: unknown): BulkImportQuestion[] {
@@ -388,6 +571,11 @@ export function bootAdmin(root: HTMLElement): void {
     sidebarTab: 'single',
     themeManagerOpen: false,
     themeManagerSubject: subjects[0],
+    analyticsEvents: [],
+    analyticsLoading: false,
+    analyticsError: null,
+    analyticsTimeRange: 'all',
+    showSubjectBreakdown: false,
   };
 
   const render = (): void => {
@@ -442,6 +630,10 @@ export function bootAdmin(root: HTMLElement): void {
     const totalQuestions = state.questions.length;
     const visibleCount = visibleQuestions.length;
 
+    const kpis = computeAnalyticsKpis(state.analyticsEvents);
+    const funnel = computeAnalyticsFunnel(state.analyticsEvents, kpis);
+    const subjectBreakdown = computeSubjectBreakdown(state.analyticsEvents);
+
     root.innerHTML = `
       <section class="admin-shell">
         <header class="admin-header">
@@ -461,6 +653,282 @@ export function bootAdmin(root: HTMLElement): void {
             <button class="button ghost" type="button" data-action="sign-out">Sign out</button>
           </div>
         </header>
+
+        <!-- Student Telemetry & Conversion Funnel Command Center -->
+        <section class="admin-telemetry-panel" aria-label="Student Telemetry and Conversion Funnel">
+          <div class="telemetry-panel-header">
+            <div class="telemetry-title-block">
+              <div class="telemetry-live-badge">
+                <span class="live-dot" aria-hidden="true"></span>
+                <span>Telemetry Command Center</span>
+              </div>
+              <h2>Student Traffic &amp; Quiz Conversion Funnel</h2>
+              <p>Real-time analytics on visitors, quiz attempts, and completions.</p>
+            </div>
+            <div class="telemetry-controls">
+              <div class="telemetry-time-range-group" role="group" aria-label="Time range filter">
+                <button
+                  type="button"
+                  class="telemetry-range-btn ${state.analyticsTimeRange === 'all' ? 'active' : ''}"
+                  data-action="switch-analytics-range"
+                  data-range="all"
+                  aria-pressed="${state.analyticsTimeRange === 'all'}"
+                >
+                  All Time
+                </button>
+                <button
+                  type="button"
+                  class="telemetry-range-btn ${state.analyticsTimeRange === '7d' ? 'active' : ''}"
+                  data-action="switch-analytics-range"
+                  data-range="7d"
+                  aria-pressed="${state.analyticsTimeRange === '7d'}"
+                >
+                  Last 7 Days
+                </button>
+                <button
+                  type="button"
+                  class="telemetry-range-btn ${state.analyticsTimeRange === 'today' ? 'active' : ''}"
+                  data-action="switch-analytics-range"
+                  data-range="today"
+                  aria-pressed="${state.analyticsTimeRange === 'today'}"
+                >
+                  Today
+                </button>
+              </div>
+              <button
+                type="button"
+                class="telemetry-refresh-btn ${state.analyticsLoading ? 'is-loading' : ''}"
+                data-action="refresh-analytics"
+                title="Refresh analytics data"
+                ${state.analyticsLoading ? 'disabled' : ''}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>${state.analyticsLoading ? 'Syncing...' : 'Refresh'}</span>
+              </button>
+            </div>
+          </div>
+
+          ${state.analyticsError ? `
+            <div class="telemetry-notice-box">
+              <div class="telemetry-notice-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div class="telemetry-notice-content">
+                <strong>Telemetry database setup pending</strong>
+                <p>Telemetry table was not reachable: <code>${escapeHtml(state.analyticsError)}</code>.</p>
+                <p class="telemetry-notice-help">To activate real-time telemetry, run migration file <code>supabase/migrations/0007_site_analytics.sql</code> in your Supabase SQL Editor.</p>
+              </div>
+            </div>
+          ` : `
+            <!-- 4 Executive KPI Cards -->
+            <div class="telemetry-kpi-grid">
+              <!-- KPI 1: Entered Webpage -->
+              <article class="telemetry-kpi-card" id="kpi-visitors">
+                <div class="kpi-card-header">
+                  <span class="kpi-title">Entered Webpage</span>
+                  <span class="kpi-icon-badge kpi-visitors" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  </span>
+                </div>
+                <div class="kpi-main-metric">
+                  <span class="kpi-number" id="stat-telemetry-visitors">${kpis.totalVisitors}</span>
+                  <span class="kpi-unit">visitors</span>
+                </div>
+                <div class="kpi-subtext">
+                  <span>${kpis.totalVisits} page visits logged</span>
+                  <span class="kpi-tag">Deduplicated</span>
+                </div>
+              </article>
+
+              <!-- KPI 2: Started Quiz -->
+              <article class="telemetry-kpi-card" id="kpi-starts">
+                <div class="kpi-card-header">
+                  <span class="kpi-title">Started Quiz</span>
+                  <span class="kpi-icon-badge kpi-starts" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  </span>
+                </div>
+                <div class="kpi-main-metric">
+                  <span class="kpi-number" id="stat-telemetry-starts">${kpis.quizzesStarted}</span>
+                  <span class="kpi-unit">attempts</span>
+                </div>
+                <div class="kpi-subtext">
+                  <span class="kpi-accent-text">${funnel[1].rate}%</span>
+                  <span>of visitors started a quiz</span>
+                </div>
+              </article>
+
+              <!-- KPI 3: Ended Quiz -->
+              <article class="telemetry-kpi-card" id="kpi-completions">
+                <div class="kpi-card-header">
+                  <span class="kpi-title">Ended Quiz</span>
+                  <span class="kpi-icon-badge kpi-completions" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  </span>
+                </div>
+                <div class="kpi-main-metric">
+                  <span class="kpi-number" id="stat-telemetry-completions">${kpis.quizzesCompleted}</span>
+                  <span class="kpi-unit">completed</span>
+                </div>
+                <div class="kpi-subtext">
+                  <span class="kpi-accent-text ${kpis.completionRate >= 70 ? 'positive' : ''}">${kpis.completionRate}%</span>
+                  <span>completion rate</span>
+                </div>
+              </article>
+
+              <!-- KPI 4: Quality & Performance -->
+              <article class="telemetry-kpi-card" id="kpi-performance">
+                <div class="kpi-card-header">
+                  <span class="kpi-title">Avg Performance</span>
+                  <span class="kpi-icon-badge kpi-performance" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  </span>
+                </div>
+                <div class="kpi-main-metric">
+                  <span class="kpi-number">${kpis.avgScore !== null ? `${kpis.avgScore}` : '--'}</span>
+                  <span class="kpi-unit">${kpis.avgScore !== null ? '/ 25 avg' : 'no data'}</span>
+                </div>
+                <div class="kpi-subtext">
+                  <span>${kpis.avgTimeSeconds !== null ? `${Math.floor(kpis.avgTimeSeconds / 60)}m ${kpis.avgTimeSeconds % 60}s avg duration` : 'Awaiting completed quizzes'}</span>
+                </div>
+              </article>
+            </div>
+
+            <!-- Visual 3-Stage Conversion Funnel -->
+            <div class="telemetry-funnel-card">
+              <div class="funnel-card-header">
+                <div>
+                  <h3 class="funnel-title">User Journey &amp; Conversion Funnel</h3>
+                  <p class="funnel-subtitle">Drop-off progression from site landing to quiz completion</p>
+                </div>
+                <span class="funnel-summary-badge">
+                  Overall Conversion: <strong>${kpis.totalVisitors > 0 ? ((kpis.quizzesCompleted / kpis.totalVisitors) * 100).toFixed(1) : '0.0'}%</strong>
+                </span>
+              </div>
+
+              <div class="telemetry-funnel-stages">
+                <!-- Stage 1 -->
+                <div class="funnel-stage-item stage-visitors">
+                  <div class="funnel-stage-head">
+                    <span class="funnel-step-num">Stage 1</span>
+                    <span class="funnel-stage-name">Entered Webpage</span>
+                    <span class="funnel-stage-count">${funnel[0].count}</span>
+                  </div>
+                  <div class="funnel-bar-track">
+                    <div class="funnel-bar-fill stage-1-fill" style="width: 100%;"></div>
+                  </div>
+                  <div class="funnel-stage-metrics">
+                    <span class="funnel-rate-tag">100% of traffic</span>
+                    <span class="funnel-dropoff-tag zero">Baseline</span>
+                  </div>
+                </div>
+
+                <div class="funnel-stage-arrow" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </div>
+
+                <!-- Stage 2 -->
+                <div class="funnel-stage-item stage-starts">
+                  <div class="funnel-stage-head">
+                    <span class="funnel-step-num">Stage 2</span>
+                    <span class="funnel-stage-name">Started Quiz</span>
+                    <span class="funnel-stage-count">${funnel[1].count}</span>
+                  </div>
+                  <div class="funnel-bar-track">
+                    <div class="funnel-bar-fill stage-2-fill" style="width: ${Math.min(100, Math.max(funnel[1].count > 0 ? 8 : 0, funnel[1].rate))}%;"></div>
+                  </div>
+                  <div class="funnel-stage-metrics">
+                    <span class="funnel-rate-tag">${funnel[1].rate}% started</span>
+                    <span class="funnel-dropoff-tag ${funnel[1].dropOff > 50 ? 'high' : ''}">${funnel[1].dropOff}% drop-off</span>
+                  </div>
+                </div>
+
+                <div class="funnel-stage-arrow" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </div>
+
+                <!-- Stage 3 -->
+                <div class="funnel-stage-item stage-completions">
+                  <div class="funnel-stage-head">
+                    <span class="funnel-step-num">Stage 3</span>
+                    <span class="funnel-stage-name">Ended Quiz</span>
+                    <span class="funnel-stage-count">${funnel[2].count}</span>
+                  </div>
+                  <div class="funnel-bar-track">
+                    <div class="funnel-bar-fill stage-3-fill" style="width: ${Math.min(100, Math.max(funnel[2].count > 0 ? 8 : 0, funnel[2].rate))}%;"></div>
+                  </div>
+                  <div class="funnel-stage-metrics">
+                    <span class="funnel-rate-tag">${funnel[2].rate}% finished</span>
+                    <span class="funnel-dropoff-tag ${funnel[2].dropOff > 50 ? 'high' : ''}">${funnel[2].dropOff}% drop-off</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subject Breakdown Toggle & Table -->
+            <div class="telemetry-breakdown-card">
+              <div class="telemetry-breakdown-header">
+                <div>
+                  <h4 class="breakdown-title">Subject &amp; Curriculum Engagement</h4>
+                  <p class="breakdown-subtitle">Breakdown of quiz starts and completions per academic subject</p>
+                </div>
+                <button
+                  type="button"
+                  class="button secondary telemetry-breakdown-toggle"
+                  data-action="toggle-subject-breakdown"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                  <span>${state.showSubjectBreakdown ? 'Hide Breakdown' : `View Subject Breakdown (${subjectBreakdown.length})`}</span>
+                </button>
+              </div>
+
+              ${state.showSubjectBreakdown ? `
+                <div class="telemetry-breakdown-body">
+                  ${subjectBreakdown.length > 0 ? `
+                    <div class="telemetry-table-wrapper">
+                      <table class="telemetry-table">
+                        <thead>
+                          <tr>
+                            <th>Subject</th>
+                            <th class="num-col">Started</th>
+                            <th class="num-col">Completed</th>
+                            <th class="num-col">Completion Rate</th>
+                            <th>Top Theme</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${subjectBreakdown.map((row) => `
+                            <tr>
+                              <td class="subject-col">
+                                <span class="subject-name-cell">${escapeHtml(row.subject)}</span>
+                              </td>
+                              <td class="num-col"><strong>${row.starts}</strong></td>
+                              <td class="num-col"><strong>${row.completions}</strong></td>
+                              <td class="num-col">
+                                <span class="badge ${row.completionRate >= 70 ? 'badge-success' : 'badge-neutral'}">
+                                  ${row.completionRate}%
+                                </span>
+                              </td>
+                              <td class="theme-col">
+                                ${row.themes.length > 0 ? `
+                                  <span class="theme-pill">${escapeHtml(row.themes[0].theme)} (${row.themes[0].starts} starts)</span>
+                                ` : '<span class="subtle">None</span>'}
+                              </td>
+                            </tr>
+                          `).join('')}
+                        </tbody>
+                      </table>
+                    </div>
+                  ` : `
+                    <div class="telemetry-empty-breakdown">
+                      <p>No subject activity recorded yet in this time frame.</p>
+                    </div>
+                  `}
+                </div>
+              ` : ''}
+            </div>
+          `}
+        </section>
 
         <section class="admin-stats">
           <article class="admin-stat-card">
@@ -757,17 +1225,52 @@ export function bootAdmin(root: HTMLElement): void {
     state.questions = (data ?? []) as Question[];
   };
 
+  const loadAnalytics = async (): Promise<void> => {
+    state.analyticsLoading = true;
+    state.analyticsError = null;
+    try {
+      let query = supabase
+        .from('site_analytics')
+        .select('id, event_type, session_id, subject, theme, score, total_questions, time_taken_seconds, metadata, created_at')
+        .order('created_at', { ascending: false });
+
+      const now = new Date();
+      if (state.analyticsTimeRange === 'today') {
+        const todayStart = new Date(now);
+        todayStart.setHours(0, 0, 0, 0);
+        query = query.gte('created_at', todayStart.toISOString());
+      } else if (state.analyticsTimeRange === '7d') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        query = query.gte('created_at', sevenDaysAgo.toISOString());
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        state.analyticsError = error.message;
+        state.analyticsEvents = [];
+      } else {
+        state.analyticsEvents = (data ?? []) as AnalyticsEvent[];
+        state.analyticsError = null;
+      }
+    } catch (err) {
+      state.analyticsError = err instanceof Error ? err.message : 'Telemetry request failed';
+      state.analyticsEvents = [];
+    } finally {
+      state.analyticsLoading = false;
+    }
+  };
+
   const refresh = async (): Promise<void> => {
     state.busy = true;
     render();
     try {
-      await loadQuestions();
+      await Promise.all([loadQuestions(), loadAnalytics()]);
       state.busy = false;
       state.error = null;
       render();
     } catch (error) {
       state.busy = false;
-      state.error = error instanceof Error ? error.message : 'Failed to load questions.';
+      state.error = error instanceof Error ? error.message : 'Failed to load dashboard data.';
       render();
     }
   };
@@ -1148,6 +1651,29 @@ export function bootAdmin(root: HTMLElement): void {
 
     const action = target.closest<HTMLElement>('[data-action]');
     if (!action) {
+      return;
+    }
+
+    if (action.dataset.action === 'switch-analytics-range') {
+      const range = action.dataset.range as AnalyticsTimeRange | undefined;
+      if (range && state.analyticsTimeRange !== range) {
+        state.analyticsTimeRange = range;
+        render();
+        void loadAnalytics().then(() => render());
+      }
+      return;
+    }
+
+    if (action.dataset.action === 'refresh-analytics') {
+      state.analyticsLoading = true;
+      render();
+      void loadAnalytics().then(() => render());
+      return;
+    }
+
+    if (action.dataset.action === 'toggle-subject-breakdown') {
+      state.showSubjectBreakdown = !state.showSubjectBreakdown;
+      render();
       return;
     }
 

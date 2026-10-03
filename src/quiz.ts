@@ -14,6 +14,7 @@ import {
 } from './constants';
 import { initThemeTitles, syncThemeTitlesFromRemote } from './themeTitles';
 import { readLocal, readSession, writeLocal, writeSession } from './storage';
+import { trackQuizStart, trackQuizComplete } from './telemetry';
 import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
 
 export type QuizLevel = 'CIFS' | 'Level 4';
@@ -733,6 +734,7 @@ export class QuizApp {
         busy: false,
       };
       this.render();
+      trackQuizStart(config.subject, config.theme);
     } catch (error) {
       document.body.classList.remove('quiz-fullscreen');
       if (error instanceof InsufficientQuestionsError) {
@@ -842,7 +844,13 @@ export class QuizApp {
     };
     this.render();
 
-    // Result display is local-only; nothing is written to Supabase.
+    trackQuizComplete({
+      subject: result.subject,
+      theme: result.theme,
+      score: result.score,
+      total: result.total,
+      timeUsedSeconds: result.time_used_seconds,
+    });
   }
 }
 

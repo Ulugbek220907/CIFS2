@@ -149,6 +149,77 @@ test('SQL Migration 0004_add_level4_subjects.sql', () => {
   assert.match(sql, /results_subject_check/);
 });
 
+test('SQL Migration 0007_site_analytics.sql schema, constraints, indexes, and RLS', () => {
+  assert.ok(fs.existsSync('supabase/migrations/0007_site_analytics.sql'), 'Migration 0007 file exists');
+  const sql = fs.readFileSync('supabase/migrations/0007_site_analytics.sql', 'utf8');
+
+  // Table creation & columns
+  assert.match(sql, /create table (if not exists )?public\.site_analytics/i);
+  assert.match(sql, /id\s+uuid\s+primary key/i);
+  assert.match(sql, /event_type\s+text\s+not null/i);
+  assert.match(sql, /session_id\s+text\s+not null/i);
+  assert.match(sql, /subject\s+text\s+null/i);
+  assert.match(sql, /theme\s+text\s+null/i);
+  assert.match(sql, /score\s+integer\s+null/i);
+  assert.match(sql, /total_questions\s+integer\s+null/i);
+  assert.match(sql, /time_taken_seconds\s+integer\s+null/i);
+  assert.match(sql, /metadata\s+jsonb\s+not null/i);
+  assert.match(sql, /created_at\s+timestamptz\s+not null/i);
+
+  // Check constraints
+  assert.match(sql, /event_type in \('page_visit',\s*'quiz_start',\s*'quiz_complete'\)/);
+  assert.match(sql, /score is null or score >= 0/);
+  assert.match(sql, /total_questions is null or total_questions > 0/);
+  assert.match(sql, /time_taken_seconds is null or time_taken_seconds >= 0/);
+
+  // Subject check constraint includes all subjects
+  const requiredSubjects = [
+    'Quantitative Methods',
+    'Academic Communication Skills',
+    'Professional Skills & Employability',
+    'Critical Thinking & Citizenship',
+    'Introduction to Business and Economics',
+    'Foundations of Economics',
+    'Understanding Finance',
+    'Math for Eco',
+    'Exploring Economics',
+    'Contemporary Issues in Global Economy',
+    'Financial Accounting',
+    'Fundamentals of Statistics',
+    'Essentials of Economics',
+  ];
+  for (const s of requiredSubjects) {
+    assert.match(sql, new RegExp(`'${s}'`));
+  }
+
+  // Theme check constraint includes Theme 1 to Theme 12
+  for (let i = 1; i <= 12; i++) {
+    assert.match(sql, new RegExp(`'Theme ${i}'`));
+  }
+
+  // Indexes
+  assert.match(sql, /create index (if not exists )?site_analytics_event_type_created_at_idx\s+on public\.site_analytics\s*\(\s*event_type,\s*created_at desc\s*\)/i);
+  assert.match(sql, /create index (if not exists )?site_analytics_subject_theme_created_at_idx\s+on public\.site_analytics\s*\(\s*subject,\s*theme,\s*created_at desc\s*\)\s*where subject is not null/i);
+  assert.match(sql, /create index (if not exists )?site_analytics_session_id_idx\s+on public\.site_analytics\s*\(\s*session_id\s*\)/i);
+  assert.match(sql, /create index (if not exists )?site_analytics_created_at_idx\s+on public\.site_analytics\s*\(\s*created_at desc\s*\)/i);
+
+  // RLS enablement
+  assert.match(sql, /alter table public\.site_analytics enable row level security/i);
+
+  // RLS Policies
+  assert.match(sql, /create policy ["']site_analytics are insertable by anyone["']/i);
+  assert.match(sql, /for insert\s+to anon,\s*authenticated\s+with check\s*\(\s*true\s*\)/i);
+
+  assert.match(sql, /create policy ["']site_analytics are readable by admins only["']/i);
+  assert.match(sql, /for select\s+to authenticated\s+using\s*\(\s*public\.is_admin\(\)\s*\)/i);
+
+  assert.match(sql, /create policy ["']site_analytics are deletable by admins only["']/i);
+  assert.match(sql, /for delete\s+to authenticated\s+using\s*\(\s*public\.is_admin\(\)\s*\)/i);
+
+  // Schema cache reload
+  assert.match(sql, /pg_notify\('pgrst',\s*'reload schema'\)/i);
+});
+
 test('Admin sample template contains all Level 4 subjects', () => {
   const adminCode = fs.readFileSync('src/admin/index.ts', 'utf8');
   assert.match(adminCode, /"subject": "Introduction to Business and Economics"/);
