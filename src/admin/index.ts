@@ -689,14 +689,14 @@ export function bootAdmin(root: HTMLElement): void {
             <div class="theme-modal-header">
               <div>
                 <h2 id="theme-modal-title">Manage Theme Names</h2>
-                <p>Assign custom names to themes or leave blank to show default ("Theme 1", "Theme 2", etc.).</p>
+                <p>Assign custom names to themes for the selected subject. Leave blank to show the standard name.</p>
               </div>
               <button class="theme-modal-close" type="button" data-action="close-theme-manager" aria-label="Close modal">&times;</button>
             </div>
             <form id="theme-manager-form">
               <div class="theme-modal-body">
                 <div class="theme-manager-subject-select">
-                  <label for="theme-mgr-subject">Subject</label>
+                  <label for="theme-mgr-subject">Select Subject</label>
                   <select id="theme-mgr-subject" name="manager_subject">
                     ${subjects.map((s) => `<option value="${escapeHtml(s)}" ${state.themeManagerSubject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
                   </select>
@@ -709,13 +709,14 @@ export function bootAdmin(root: HTMLElement): void {
                       <div class="theme-input-item">
                         <label for="theme-input-${t.replace(/\s+/g, '-')}">
                           <span>${t}</span>
+                          <span class="theme-badge">${currentTitle ? 'Custom' : 'Default'}</span>
                         </label>
                         <input
                           id="theme-input-${t.replace(/\s+/g, '-')}"
                           type="text"
                           name="${t}"
                           value="${escapeHtml(currentTitle)}"
-                          placeholder="Default (${t})"
+                          placeholder="e.g. Intro to Accounting (or leave blank)"
                         />
                       </div>
                     `;
