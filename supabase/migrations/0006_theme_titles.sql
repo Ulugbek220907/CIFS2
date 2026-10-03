@@ -13,6 +13,23 @@ create table if not exists public.theme_titles (
 -- Enable RLS
 alter table public.theme_titles enable row level security;
 
+-- Ensure is_admin helper exists
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
+    or (auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true
+    or lower(coalesce(auth.jwt() ->> 'email', '')) in ('ulugbekisoqov22@gmail.com')
+    or (auth.uid() is not null and not coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false)),
+    false
+  );
+$$;
+
 -- Public can read theme titles
 drop policy if exists "theme_titles are readable by anyone" on public.theme_titles;
 create policy "theme_titles are readable by anyone"
