@@ -4,6 +4,7 @@ import { renderMathText } from './math';
 import {
   cifsSubjects,
   getQuizThemeTitle,
+  getSubjectThemes,
   level4Subjects,
   passPercent,
   quizLength,
@@ -266,14 +267,19 @@ export class QuizApp {
           <button class="back-link" type="button" data-action="back-subjects">← Choose Another Subject</button>
           <div class="selected-subject-header" id="active-subject-title">${escapeHtml(activeSubject ?? config.subject)}</div>
           <div class="theme-options">
-            ${themes
-              .map(
-                (theme) => `
-                  <button class="theme-btn" type="button" data-action="theme-select" data-theme="${theme}">
-                    ${theme}
+            ${getSubjectThemes(activeSubject ?? config.subject)
+              .map((item) => {
+                const hasCustomTitle = item.title !== item.theme;
+                return `
+                  <button class="theme-btn" type="button" data-action="theme-select" data-theme="${item.theme}">
+                    <div class="theme-btn-content">
+                      ${hasCustomTitle ? `<span class="theme-btn-tag">${item.theme}</span>` : ''}
+                      <span class="theme-btn-title">${escapeHtml(hasCustomTitle ? `${item.themeNumber}. ${item.title}` : item.theme)}</span>
+                    </div>
+                    <span class="theme-btn-arrow" aria-hidden="true">→</span>
                   </button>
-                `,
-              )
+                `;
+              })
               .join('')}
           </div>
         </section>
@@ -284,7 +290,11 @@ export class QuizApp {
   private renderLoading(): string {
     const subject = this.state.config?.subject;
     const theme = this.state.config?.theme;
-    const topicLabel = subject && theme ? `${subject} · ${theme}` : 'your quiz';
+    const themeTitle = subject && theme ? getQuizThemeTitle(subject, theme) : theme;
+    const topicLabel =
+      subject && theme
+        ? `${subject} · ${themeTitle && themeTitle !== theme ? `${theme}: ${themeTitle}` : theme}`
+        : 'your quiz';
     return `
       <section class="panel centered-shell">
         <div class="spinner" aria-hidden="true"></div>
@@ -298,6 +308,10 @@ export class QuizApp {
     if (this.state.errorKind === 'insufficient') {
       const subject = this.state.errorSubject ?? this.state.config?.subject ?? 'This topic';
       const theme = this.state.errorTheme ?? this.state.config?.theme ?? '';
+      const themeTitle =
+        subject && theme ? getQuizThemeTitle(subject as Subject, theme as Theme) : theme;
+      const themePillLabel =
+        themeTitle && themeTitle !== theme ? `${theme} (${themeTitle})` : theme;
 
       return `
         <section class="panel centered-shell topic-unavailable-panel">
@@ -314,7 +328,7 @@ export class QuizApp {
           <h2 class="unavailable-title">Questions are on the way!</h2>
           <div class="unavailable-topic-pill">
             <span class="topic-pill-subject">${escapeHtml(subject)}</span>
-            ${theme ? `<span class="topic-pill-divider">·</span><span class="topic-pill-theme">${escapeHtml(theme)}</span>` : ''}
+            ${theme ? `<span class="topic-pill-divider">·</span><span class="topic-pill-theme">${escapeHtml(themePillLabel)}</span>` : ''}
           </div>
           <p class="lede unavailable-lede">
             The question bank for this module is currently being finalized and reviewed. Practice questions will be published here soon.
@@ -412,13 +426,18 @@ export class QuizApp {
     const verdictClass = result.percent >= passPercent ? 'good' : 'bad';
     const verdict = result.percent >= passPercent ? 'Pass' : 'Needs more work';
     const history = this.state.history && this.state.history.length > 0 ? this.state.history : loadHistory();
+    const resultThemeTitle = getQuizThemeTitle(result.subject, result.theme);
+    const resultThemeDisplay =
+      resultThemeTitle && resultThemeTitle !== result.theme
+        ? `${result.theme} (${resultThemeTitle})`
+        : result.theme;
 
     return `
       <section class="results-stack">
         <article class="panel results-banner ${verdictClass}">
           <div class="eyebrow">Quiz completed</div>
           <h2>${verdict}</h2>
-          <p class="lede">Your attempt for <strong>${escapeHtml(result.subject)}</strong> / <strong>${escapeHtml(result.theme)}</strong> is complete.</p>
+          <p class="lede">Your attempt for <strong>${escapeHtml(result.subject)}</strong> / <strong>${escapeHtml(resultThemeDisplay)}</strong> is complete.</p>
         </article>
 
         <section class="results-grid ${history.length <= 1 ? 'single-column' : ''}">
@@ -471,6 +490,11 @@ export class QuizApp {
                       .map((item) => {
                         const isCurrent = item.id === result.id;
                         const itemVerdict = item.percent >= passPercent ? 'good' : 'bad';
+                        const itemThemeTitle = getQuizThemeTitle(item.subject, item.theme);
+                        const itemThemeDisplay =
+                          itemThemeTitle && itemThemeTitle !== item.theme
+                            ? `${item.theme}: ${itemThemeTitle}`
+                            : item.theme;
                         return `
                           <div class="history-item ${isCurrent ? 'current-attempt' : ''}">
                             <div class="history-item-details">
@@ -479,7 +503,7 @@ export class QuizApp {
                                 ${isCurrent ? '<span class="history-current-pill">Latest</span>' : ''}
                               </div>
                               <div class="subtle history-item-meta">
-                                ${escapeHtml(item.theme)} · ${formatDateTime(item.created_at)} · ${formatDuration(item.time_used_seconds)}
+                                ${escapeHtml(itemThemeDisplay)} · ${formatDateTime(item.created_at)} · ${formatDuration(item.time_used_seconds)}
                               </div>
                             </div>
                             <div class="history-score ${itemVerdict}">

@@ -73,6 +73,22 @@
       "explanation": "The fundamental accounting equation is Assets = Liabilities + Equity."
     },
     {
+      "subject": "Financial Accounting",
+      "theme": "Theme 2",
+      "question_text": "What is the first step in the accounting cycle?",
+      "options": ["Preparing financial statements", "Analyzing transactions from source documents", "Closing temporary accounts", "Preparing an adjusted trial balance"],
+      "correct_index": 1,
+      "explanation": "The accounting cycle begins by analyzing source documents to identify and record business transactions."
+    },
+    {
+      "subject": "Financial Accounting",
+      "theme": "Theme 3",
+      "question_text": "Why are adjusting entries recorded at the end of an accounting period?",
+      "options": ["To match revenues and expenses to the proper period", "To balance the bank statement", "To close dividend accounts permanently", "To calculate total cash withdrawals only"],
+      "correct_index": 0,
+      "explanation": "Adjusting entries ensure that the revenue recognition and expense matching principles are properly followed."
+    },
+    {
       "subject": "Fundamentals of Statistics",
       "theme": "Theme 1",
       "question_text": "What is the measure of the spread or dispersion of a dataset relative to its mean?",
@@ -81,12 +97,76 @@
       "explanation": "Standard deviation measures the spread or dispersion of data values relative to their mean."
     },
     {
+      "subject": "Fundamentals of Statistics",
+      "theme": "Theme 2",
+      "question_text": "If events A and B are mutually exclusive, what is P(A and B)?",
+      "options": ["1", "P(A) * P(B)", "0", "P(A) + P(B)"],
+      "correct_index": 2,
+      "explanation": "Mutually exclusive events cannot happen at the same time, so P(A and B) is 0."
+    },
+    {
+      "subject": "Fundamentals of Statistics",
+      "theme": "Theme 3",
+      "question_text": "Which condition is required for a valid discrete probability distribution?",
+      "options": ["The sum of all probabilities must equal 1", "Every probability must be negative", "The variable must take infinite continuous values", "Probabilities must decrease with each outcome"],
+      "correct_index": 0,
+      "explanation": "For any discrete probability distribution, the sum of all individual probabilities must equal 1."
+    },
+    {
+      "subject": "Fundamentals of Statistics",
+      "theme": "Theme 4",
+      "question_text": "For a standard normal distribution, what are the mean and standard deviation?",
+      "options": ["Mean = 1, SD = 0", "Mean = 0, SD = 1", "Mean = 100, SD = 15", "Mean = 0, SD = 0"],
+      "correct_index": 1,
+      "explanation": "A standard normal distribution (Z-distribution) has a mean of 0 and a standard deviation of 1."
+    },
+    {
       "subject": "Essentials of Economics",
       "theme": "Theme 1",
       "question_text": "What does opportunity cost represent?",
       "options": ["The monetary price paid for a good", "The value of the next best alternative forgone", "The total accounting cost incurred", "The sunk cost of past investments"],
       "correct_index": 1,
       "explanation": "Opportunity cost is the value of the next best alternative forgone when making a decision."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 2",
+      "question_text": "What occurs in a competitive market when the quantity supplied exceeds the quantity demanded?",
+      "options": ["A shortage", "A surplus", "A market equilibrium", "Price immediately doubles"],
+      "correct_index": 1,
+      "explanation": "When quantity supplied exceeds quantity demanded at the current price, there is a surplus (excess supply)."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 3",
+      "question_text": "If the price elasticity of demand for a good is greater than 1, demand is considered:",
+      "options": ["Inelastic", "Unit elastic", "Elastic", "Perfectly inelastic"],
+      "correct_index": 2,
+      "explanation": "Demand is elastic when the absolute value of price elasticity is greater than 1."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 4",
+      "question_text": "What is consumer surplus?",
+      "options": ["The amount a buyer pays minus the cost of production", "The buyer's willingness to pay minus the amount actually paid", "The total revenue earned by sellers", "The profit realized by producers in equilibrium"],
+      "correct_index": 1,
+      "explanation": "Consumer surplus measures the benefit buyers receive from participating in a market (willingness to pay minus price paid)."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 5",
+      "question_text": "What metric measures the overall price level of goods and services bought by a typical household?",
+      "options": ["Gross National Product", "Consumer Price Index (CPI)", "Unemployment Rate", "Federal Funds Rate"],
+      "correct_index": 1,
+      "explanation": "The Consumer Price Index (CPI) measures the overall cost of goods and services purchased by a typical consumer."
+    },
+    {
+      "subject": "Essentials of Economics",
+      "theme": "Theme 6",
+      "question_text": "Which factor is primarily responsible for long-run increases in living standards?",
+      "options": ["Productivity growth", "Higher inflation rates", "Currency devaluation", "Tariff barriers"],
+      "correct_index": 0,
+      "explanation": "A nation's standard of living depends on its ability to produce goods and services (productivity)."
     }
   ]
 }

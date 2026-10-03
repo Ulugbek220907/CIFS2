@@ -1,7 +1,7 @@
 import { supabase } from '../supabase';
 import { clearNode, escapeHtml } from '../dom';
 import { renderMathText } from '../math';
-import { subjects, themes } from '../constants';
+import { getQuizThemeTitle, getSubjectThemes, resolveTheme, subjects, themes } from '../constants';
 import type { Question, Subject, Theme } from '../types';
 import 'katex/dist/katex.min.css';
 import '../admin.css';
@@ -69,6 +69,38 @@ function isTheme(value: unknown): value is Theme {
   return typeof value === 'string' && (themes as readonly string[]).includes(value);
 }
 
+function renderThemeSelectOptions(subject: Subject, selectedTheme?: string): string {
+  const options = getSubjectThemes(subject);
+  return options
+    .map((item) => {
+      const isSelected = selectedTheme === item.theme;
+      const label = item.title !== item.theme ? `${item.theme}: ${item.title}` : item.theme;
+      return `<option value="${item.theme}" ${isSelected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+}
+
+function getFilterThemeOptions(filterSubject: Subject | 'All', selectedTheme: Theme | 'All'): string {
+  if (filterSubject === 'All') {
+    return themes
+      .map((theme) => `<option value="${theme}" ${selectedTheme === theme ? 'selected' : ''}>${theme}</option>`)
+      .join('');
+  }
+  const subjectThemes = getSubjectThemes(filterSubject);
+  return subjectThemes
+    .map((item) => {
+      const isSelected = selectedTheme === item.theme;
+      const label = item.title !== item.theme ? `${item.theme}: ${item.title}` : item.theme;
+      return `<option value="${item.theme}" ${selectedTheme === item.theme ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+}
+
+function getThemeBadgeLabel(subject: Subject, theme: Theme): string {
+  const title = getQuizThemeTitle(subject, theme);
+  return title !== theme ? `${theme}: ${title}` : theme;
+}
+
 function normalizeBulkImportPayload(parsed: unknown): BulkImportQuestion[] {
   const rawQuestions = Array.isArray(parsed)
     ? parsed
@@ -97,8 +129,9 @@ function normalizeBulkImportPayload(parsed: unknown): BulkImportQuestion[] {
       throw new Error(`Question ${index + 1} has an invalid subject.`);
     }
 
-    if (!isTheme(theme)) {
-      throw new Error(`Question ${index + 1} has an invalid theme.`);
+    const resolvedTheme = typeof theme === 'string' ? resolveTheme(subject, theme) : null;
+    if (!resolvedTheme || !isTheme(resolvedTheme)) {
+      throw new Error(`Question ${index + 1} has an invalid theme: "${String(theme)}".`);
     }
 
     if (typeof questionText !== 'string' || !questionText.trim()) {
@@ -119,7 +152,7 @@ function normalizeBulkImportPayload(parsed: unknown): BulkImportQuestion[] {
 
     return {
       subject,
-      theme,
+      theme: resolvedTheme,
       question_text: questionText.trim(),
       options: options.map((option) => option.trim()),
       correct_index: correctIndex,
@@ -167,7 +200,12 @@ function fillQuestionForm(form: HTMLFormElement, values: QuestionFormValues): vo
   const questionText = form.elements.namedItem('question_text') as HTMLTextAreaElement | HTMLInputElement | null;
   const explanation = form.elements.namedItem('explanation') as HTMLTextAreaElement | HTMLInputElement | null;
 
-  if (subject) subject.value = values.subject;
+  if (subject) {
+    subject.value = values.subject;
+    if (theme) {
+      theme.innerHTML = renderThemeSelectOptions(values.subject, values.theme);
+    }
+  }
   if (theme) theme.value = values.theme;
   if (questionText) questionText.value = values.question_text;
   if (explanation) explanation.value = values.explanation;
@@ -256,7 +294,7 @@ function renderQuestionRow(question: Question, isEditing: boolean): string {
       <div class="question-meta-row">
         <div class="question-tags">
           <span class="tag-subject">${escapeHtml(question.subject)}</span>
-          <span class="tag-theme">${escapeHtml(question.theme)}</span>
+          <span class="tag-theme">${escapeHtml(getThemeBadgeLabel(question.subject, question.theme))}</span>
         </div>
         <div class="question-card-actions">
           <button class="action-btn-sm" type="button" data-action="edit-question" data-id="${question.id}">Edit</button>
@@ -326,6 +364,10 @@ function updateFeedView(state: AdminState, root: HTMLElement): void {
   }
   if (activeFilterEl) {
     activeFilterEl.textContent = `${state.filterSubject} · ${state.filterTheme}`;
+  }
+  const filterThemeSelect = root.querySelector<HTMLSelectElement>('#filter-theme');
+  if (filterThemeSelect) {
+    filterThemeSelect.innerHTML = `<option value="All">All themes</option>${getFilterThemeOptions(state.filterSubject, state.filterTheme)}`;
   }
 }
 
@@ -487,14 +529,14 @@ export function bootAdmin(root: HTMLElement): void {
                       <div class="form-grid-2">
                         <label>
                           <span>Subject</span>
-                          <select name="subject" required>
+                          <select name="subject" id="question-subject" required>
                             ${subjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
                           </select>
                         </label>
                         <label>
                           <span>Theme</span>
-                          <select name="theme" required>
-                            ${themes.map((theme) => `<option value="${theme}">${theme}</option>`).join('')}
+                          <select name="theme" id="question-theme" required>
+                            ${renderThemeSelectOptions(subjects[0])}
                           </select>
                         </label>
                       </div>
@@ -611,7 +653,7 @@ export function bootAdmin(root: HTMLElement): void {
                 </select>
                 <select id="filter-theme" class="toolbar-select" aria-label="Filter by theme">
                   <option value="All">All themes</option>
-                  ${themes.map((theme) => `<option value="${theme}" ${state.filterTheme === theme ? 'selected' : ''}>${theme}</option>`).join('')}
+                  ${getFilterThemeOptions(state.filterSubject, state.filterTheme)}
                 </select>
               </div>
               <div class="library-count" id="library-count-display">
@@ -965,12 +1007,27 @@ export function bootAdmin(root: HTMLElement): void {
     }
 
     const select = event.target as HTMLSelectElement | null;
-    if (!select) {
+    if (!select || !(select instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    if (select.name === 'subject' && select.closest('#question-form')) {
+      const subject = select.value as Subject;
+      const themeSelect = root.querySelector<HTMLSelectElement>('#question-theme');
+      if (themeSelect) {
+        themeSelect.innerHTML = renderThemeSelectOptions(subject);
+      }
       return;
     }
 
     if (select.id === 'filter-subject') {
       state.filterSubject = select.value as AdminState['filterSubject'];
+      if (state.filterSubject !== 'All') {
+        const validThemes = getSubjectThemes(state.filterSubject).map((t) => t.theme);
+        if (state.filterTheme !== 'All' && !validThemes.includes(state.filterTheme)) {
+          state.filterTheme = 'All';
+        }
+      }
       updateFeedView(state, root);
       return;
     }
