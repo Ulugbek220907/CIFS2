@@ -11,7 +11,7 @@ import {
   subjects,
   themes,
 } from './constants';
-import { readSession, writeSession } from './storage';
+import { readLocal, readSession, writeLocal, writeSession } from './storage';
 import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
 
 export type QuizLevel = 'CIFS' | 'Level 4';
@@ -22,6 +22,22 @@ interface QuizConfig {
 }
 
 type QuizPhase = 'setup' | 'loading' | 'question' | 'review' | 'results' | 'error';
+
+export class InsufficientQuestionsError extends Error {
+  readonly subject: Subject;
+  readonly theme: Theme;
+  readonly availableCount: number;
+  readonly requiredCount: number;
+
+  constructor(subject: Subject, theme: Theme, availableCount: number, requiredCount: number) {
+    super(`Questions for ${subject} (${theme}) are currently being prepared.`);
+    this.name = 'InsufficientQuestionsError';
+    this.subject = subject;
+    this.theme = theme;
+    this.availableCount = availableCount;
+    this.requiredCount = requiredCount;
+  }
+}
 
 interface QuizState {
   phase: QuizPhase;
@@ -36,13 +52,29 @@ interface QuizState {
   score: number;
   startedAt: number | null;
   error: string | null;
+  errorKind?: 'insufficient' | 'connection' | 'generic';
+  errorSubject?: Subject;
+  errorTheme?: Theme;
   result: ResultRow | null;
+  history: ResultRow[];
   busy: boolean;
 }
 
 const activeConfigKey = 'last-config';
 const questionCachePrefix = 'question-pool:';
 const poolCacheTtlMs = 1000 * 60 * 60 * 8;
+const historyStorageKey = 'history';
+
+function loadHistory(): ResultRow[] {
+  return readLocal<ResultRow[]>(historyStorageKey) ?? [];
+}
+
+function saveHistoryResult(result: ResultRow): ResultRow[] {
+  const existing = loadHistory();
+  const updated = [result, ...existing.filter((item) => item.id !== result.id)].slice(0, 10);
+  writeLocal(historyStorageKey, updated);
+  return updated;
+}
 
 function defaultConfig(): QuizConfig {
   return {
@@ -76,23 +108,14 @@ function saveConfig(config: QuizConfig): void {
   writeSession(activeConfigKey, config);
 }
 
-async function ensureAnonymousUser(): Promise<string> {
-  const { data } = await supabase.auth.getSession();
-  if (data.session?.user.id) {
-    return data.session.user.id;
+function getAnonymousSessionUserId(): string {
+  const sessionKey = 'pulse-quiz:user-id';
+  let id = readSession<string>(sessionKey);
+  if (!id) {
+    id = uid();
+    writeSession(sessionKey, id);
   }
-
-  const { data: signInData, error } = await supabase.auth.signInAnonymously();
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const userId = signInData.user?.id;
-  if (!userId) {
-    throw new Error('Anonymous session could not be created.');
-  }
-
-  return userId;
+  return id;
 }
 
 async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Question[]> {
@@ -120,7 +143,7 @@ async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Questio
 
   const pool = (data ?? []) as Question[];
   if (pool.length < quizLength) {
-    throw new Error(`Not enough questions for ${subject} / ${theme}. Add at least ${quizLength} questions.`);
+    throw new InsufficientQuestionsError(subject, theme, pool.length, quizLength);
   }
 
   writeSession(cacheKey, { createdAt: Date.now(), pool });
@@ -162,6 +185,7 @@ export class QuizApp {
       startedAt: null,
       error: null,
       result: null,
+      history: loadHistory(),
       busy: false,
     };
   }
@@ -258,23 +282,72 @@ export class QuizApp {
   }
 
   private renderLoading(): string {
-    const label = this.state.busy ? 'Preparing your quiz and signing you in anonymously.' : 'Loading...';
+    const subject = this.state.config?.subject;
+    const theme = this.state.config?.theme;
+    const topicLabel = subject && theme ? `${subject} · ${theme}` : 'your quiz';
     return `
       <section class="panel centered-shell">
         <div class="spinner" aria-hidden="true"></div>
-        <h2>${label}</h2>
-        <p class="subtle">This only happens when the selected subject and theme are not already cached for the current session.</p>
+        <h2>Loading ${escapeHtml(topicLabel)}...</h2>
+        <p class="subtle">Preparing questions for your session. Good luck with your practice!</p>
       </section>
     `;
   }
 
   private renderError(): string {
+    if (this.state.errorKind === 'insufficient') {
+      const subject = this.state.errorSubject ?? this.state.config?.subject ?? 'This topic';
+      const theme = this.state.errorTheme ?? this.state.config?.theme ?? '';
+
+      return `
+        <section class="panel centered-shell topic-unavailable-panel">
+          <div class="empty-topic-icon" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path>
+              <path d="M8 7h8"></path>
+              <path d="M8 11h5"></path>
+              <circle cx="16" cy="18" r="3"></circle>
+              <path d="M16 17v1l1 .5"></path>
+            </svg>
+          </div>
+          <div class="eyebrow eyebrow-coming-soon">Topic In Preparation</div>
+          <h2 class="unavailable-title">Questions are on the way!</h2>
+          <div class="unavailable-topic-pill">
+            <span class="topic-pill-subject">${escapeHtml(subject)}</span>
+            ${theme ? `<span class="topic-pill-divider">·</span><span class="topic-pill-theme">${escapeHtml(theme)}</span>` : ''}
+          </div>
+          <p class="lede unavailable-lede">
+            The question bank for this module is currently being finalized and reviewed. Practice questions will be published here soon.
+          </p>
+          <p class="subtle unavailable-subtle">
+            In the meantime, choose another theme or subject to keep practicing!
+          </p>
+          <div class="button-row unavailable-actions">
+            <button class="button primary" type="button" data-action="back-themes">Choose another theme</button>
+            <button class="button ghost" type="button" data-action="reset-setup">All subjects</button>
+          </div>
+        </section>
+      `;
+    }
+
     return `
-      <section class="panel centered-shell">
-        <div class="eyebrow danger">Quiz unavailable</div>
-        <h2>Something blocked the quiz flow.</h2>
-        <p class="lede">${escapeHtml(this.state.error ?? 'Unknown error')}</p>
-        <button class="button primary" data-action="reset-setup">Back to setup</button>
+      <section class="panel centered-shell topic-unavailable-panel">
+        <div class="empty-topic-icon" aria-hidden="true">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+        <div class="eyebrow eyebrow-coming-soon">Service Notice</div>
+        <h2 class="unavailable-title">Unable to load questions</h2>
+        <p class="lede unavailable-lede">
+          We could not reach the question server at this moment. Please check your internet connection or try again shortly.
+        </p>
+        <div class="button-row unavailable-actions">
+          <button class="button primary" type="button" data-action="retake">Try again</button>
+          <button class="button ghost" type="button" data-action="reset-setup">Back to subjects</button>
+        </div>
       </section>
     `;
   }
@@ -338,6 +411,7 @@ export class QuizApp {
 
     const verdictClass = result.percent >= passPercent ? 'good' : 'bad';
     const verdict = result.percent >= passPercent ? 'Pass' : 'Needs more work';
+    const history = this.state.history && this.state.history.length > 0 ? this.state.history : loadHistory();
 
     return `
       <section class="results-stack">
@@ -347,8 +421,12 @@ export class QuizApp {
           <p class="lede">Your attempt for <strong>${escapeHtml(result.subject)}</strong> / <strong>${escapeHtml(result.theme)}</strong> is complete.</p>
         </article>
 
-        <section class="grid two-up results-grid">
+        <section class="results-grid ${history.length <= 1 ? 'single-column' : ''}">
           <article class="panel result-hero ${verdictClass}">
+            <div class="result-card-heading">
+              <span class="result-badge-label">Current Attempt</span>
+              <h3>Performance Summary</h3>
+            </div>
             <div class="results-summary">
               <div class="summary-card">
                 <span>Score</span>
@@ -363,16 +441,62 @@ export class QuizApp {
                 <strong>${formatDuration(result.time_used_seconds)}</strong>
               </div>
             </div>
-            <p class="result-summary-copy">${result.percent >= passPercent ? 'You passed this theme.' : 'You can retake this theme to improve your score.'}</p>
+            <p class="result-summary-copy">${
+              result.percent >= passPercent
+                ? 'Great job! You passed this theme with flying colors.'
+                : 'Keep practicing! You can retake this theme or try another one.'
+            }</p>
             <div class="result-actions">
               <button class="button primary" type="button" data-action="retake">Retake quiz</button>
-              <button class="button ghost" type="button" data-action="change-subject">Pick another subject</button>
+              <button class="button ghost" type="button" data-action="back-themes">Choose another theme</button>
+              <button class="button ghost" type="button" data-action="change-subject">All subjects</button>
             </div>
           </article>
+
+          ${
+            history.length > 1
+              ? `
+                <article class="panel history-panel">
+                  <div class="history-header">
+                    <div class="history-title-wrap">
+                      <span class="result-badge-label">Your Track Record</span>
+                      <h3>Recent Attempts</h3>
+                    </div>
+                    <span class="history-count-badge">${history.length} attempts</span>
+                  </div>
+                  <div class="history-list">
+                    ${history
+                      .map((item) => {
+                        const isCurrent = item.id === result.id;
+                        const itemVerdict = item.percent >= passPercent ? 'good' : 'bad';
+                        return `
+                          <div class="history-item ${isCurrent ? 'current-attempt' : ''}">
+                            <div class="history-item-details">
+                              <div class="history-item-title">
+                                <strong>${escapeHtml(item.subject)}</strong>
+                                ${isCurrent ? '<span class="history-current-pill">Latest</span>' : ''}
+                              </div>
+                              <div class="subtle history-item-meta">
+                                ${escapeHtml(item.theme)} · ${formatDateTime(item.created_at)} · ${formatDuration(item.time_used_seconds)}
+                              </div>
+                            </div>
+                            <div class="history-score ${itemVerdict}">
+                              ${item.score}/${item.total} · ${formatPercent(item.percent)}
+                            </div>
+                          </div>
+                        `;
+                      })
+                      .join('')}
+                  </div>
+                </article>
+              `
+              : ''
+          }
         </section>
       </section>
     `;
   }
+
 
   private onClick(event: MouseEvent): void {
     const target = event.target as HTMLElement | null;
@@ -456,6 +580,28 @@ export class QuizApp {
       return;
     }
 
+    if (action === 'back-themes') {
+      document.body.classList.remove('quiz-fullscreen');
+      const subject = this.state.errorSubject ?? this.state.config?.subject ?? this.state.selectedSubject;
+      this.setState({
+        phase: 'setup',
+        selectedSubject: subject,
+        questions: [],
+        currentIndex: 0,
+        selectedIndex: null,
+        review: null,
+        score: 0,
+        startedAt: null,
+        error: null,
+        errorKind: undefined,
+        errorSubject: undefined,
+        errorTheme: undefined,
+        result: null,
+        busy: false,
+      });
+      return;
+    }
+
     if (action === 'change-subject' || action === 'reset-setup') {
       document.body.classList.remove('quiz-fullscreen');
       this.setState({
@@ -468,6 +614,9 @@ export class QuizApp {
         score: 0,
         startedAt: null,
         error: null,
+        errorKind: undefined,
+        errorSubject: undefined,
+        errorTheme: undefined,
         result: null,
         busy: false,
       });
@@ -498,9 +647,12 @@ export class QuizApp {
     this.setState({
       phase: 'loading',
       config,
-      selectedSubject: null,
+      selectedSubject: config.subject,
       selectedLevel: level4Subjects.includes(config.subject) ? 'Level 4' : 'CIFS',
       error: null,
+      errorKind: undefined,
+      errorSubject: undefined,
+      errorTheme: undefined,
       busy: true,
       result: null,
       questions: [],
@@ -518,14 +670,16 @@ export class QuizApp {
       this.setState({
         phase: 'error',
         busy: false,
+        errorKind: 'connection',
         error:
-          'Supabase API kalitlari (VITE_SUPABASE_URL va VITE_SUPABASE_ANON_KEY) Netlify parametrlariga kiritilmagan. Iltimos, Netlify Environment Variables bo\'limiga kalitlarni kiriting va qayta deploy qiling.',
+          'We could not connect to the question bank at this moment. Please check your connection or try again shortly.',
       });
       return;
     }
 
+
     try {
-      const userId = await ensureAnonymousUser();
+      const userId = getAnonymousSessionUserId();
       const pool = await loadQuestionPool(config.subject, config.theme);
       const questions = pickQuizQuestions(pool);
       this.state = {
@@ -539,17 +693,32 @@ export class QuizApp {
         score: 0,
         startedAt: Date.now(),
         error: null,
+        errorKind: undefined,
+        errorSubject: undefined,
+        errorTheme: undefined,
         result: null,
         busy: false,
       };
       this.render();
     } catch (error) {
       document.body.classList.remove('quiz-fullscreen');
-      this.setState({
-        phase: 'error',
-        busy: false,
-        error: error instanceof Error ? error.message : 'Unable to start quiz.',
-      });
+      if (error instanceof InsufficientQuestionsError) {
+        this.setState({
+          phase: 'error',
+          busy: false,
+          error: error.message,
+          errorKind: 'insufficient',
+          errorSubject: error.subject,
+          errorTheme: error.theme,
+        });
+      } else {
+        this.setState({
+          phase: 'error',
+          busy: false,
+          error: error instanceof Error ? error.message : 'Unable to start quiz.',
+          errorKind: 'generic',
+        });
+      }
     }
   }
 
@@ -565,6 +734,9 @@ export class QuizApp {
       score: 0,
       startedAt: null,
       error: null,
+      errorKind: undefined,
+      errorSubject: undefined,
+      errorTheme: undefined,
       result: null,
       busy: false,
     });
@@ -626,14 +798,18 @@ export class QuizApp {
       created_at: new Date().toISOString(),
     };
 
+    const history = saveHistoryResult(result);
+
     this.state = {
       ...this.state,
       phase: 'results',
       busy: false,
       result,
+      history,
     };
     this.render();
 
     // Result display is local-only; nothing is written to Supabase.
   }
 }
+

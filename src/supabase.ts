@@ -15,8 +15,8 @@ const supabaseAnonKey = isSupabaseConfigured && rawKey ? rawKey : 'placeholder-a
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: true,
-    autoRefreshToken: true,
+    persistSession: false,
+    autoRefreshToken: false,
     detectSessionInUrl: false,
   },
 });

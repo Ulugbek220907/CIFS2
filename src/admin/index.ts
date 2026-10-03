@@ -133,8 +133,18 @@ async function readJsonFile(file: File): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-function isAdminUserEmail(email: string | null | undefined): boolean {
-  return Boolean(email);
+const DEFAULT_ADMIN_EMAILS: readonly string[] = ['ulugbekisoqov22@gmail.com'];
+
+export function isAuthorizedAdmin(
+  user: { email?: string | null; app_metadata?: Record<string, unknown> } | null | undefined,
+): boolean {
+  if (!user) return false;
+  const appMeta = user.app_metadata;
+  if (appMeta && (appMeta.role === 'admin' || appMeta.is_admin === true)) {
+    return true;
+  }
+  const email = user.email?.toLowerCase().trim();
+  return Boolean(email && DEFAULT_ADMIN_EMAILS.includes(email));
 }
 
 function questionToForm(question: Question): QuestionFormValues {
@@ -353,14 +363,14 @@ export function bootAdmin(root: HTMLElement): void {
             <div class="eyebrow">Private access</div>
             <h1>Admin sign-in</h1>
             <p class="subtle">Only pre-created Supabase accounts can log in. Public visitors stay on this form.</p>
-            <form id="admin-login" class="admin-form">
+            <form id="admin-login" class="admin-form" autocomplete="off">
               <label>
                 <span>Email</span>
-                <input name="email" type="email" autocomplete="email" required />
+                <input name="email" type="email" autocomplete="off" required />
               </label>
               <label>
                 <span>Password</span>
-                <input name="password" type="password" autocomplete="current-password" required />
+                <input name="password" type="password" autocomplete="new-password" required />
               </label>
               <button class="button primary" type="submit">Sign in</button>
               ${state.error ? `<p class="feedback bad"><strong>Error</strong><span>${escapeHtml(state.error)}</span></p>` : ''}
@@ -664,9 +674,21 @@ export function bootAdmin(root: HTMLElement): void {
   };
 
   const syncSession = async (): Promise<void> => {
+    // When non-persistent, wipe any legacy localStorage tokens from older sessions
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('sb-') || key.includes('supabase.auth'))) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // Ignore if localStorage is unavailable
+    }
+
     const { data } = await supabase.auth.getSession();
-    const session = data.session;
-    if (!session || !isAdminUserEmail(session.user.email)) {
+    const user = data.session?.user;
+    if (!user || !isAuthorizedAdmin(user)) {
       state.phase = 'login';
       state.userEmail = null;
       state.error = null;
@@ -675,7 +697,7 @@ export function bootAdmin(root: HTMLElement): void {
     }
 
     state.phase = 'dashboard';
-    state.userEmail = session.user.email ?? null;
+    state.userEmail = user.email ?? null;
     await refresh();
   };
 
@@ -706,7 +728,7 @@ export function bootAdmin(root: HTMLElement): void {
 
       void supabase.auth
         .signInWithPassword({ email, password })
-        .then(({ data, error }) => {
+        .then(async ({ data, error }) => {
           if (error) {
             form.classList.remove('is-submitting');
             if (submitBtn) {
@@ -718,6 +740,22 @@ export function bootAdmin(root: HTMLElement): void {
             const errP = document.createElement('p');
             errP.className = 'feedback bad';
             errP.innerHTML = `<strong>Error</strong><span>${escapeHtml(error.message)}</span>`;
+            form.appendChild(errP);
+            return;
+          }
+
+          if (!isAuthorizedAdmin(data.user)) {
+            await supabase.auth.signOut();
+            form.classList.remove('is-submitting');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Sign in';
+            }
+            state.phase = 'login';
+            state.error = 'Access denied. This account does not have administrator privileges.';
+            const errP = document.createElement('p');
+            errP.className = 'feedback bad';
+            errP.innerHTML = `<strong>Error</strong><span>Access denied. This account does not have administrator privileges.</span>`;
             form.appendChild(errP);
             return;
           }
@@ -1081,6 +1119,16 @@ export function bootAdmin(root: HTMLElement): void {
       const btn = action as HTMLButtonElement;
       btn.disabled = true;
       btn.textContent = 'Signing out...';
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('sb-') || key.includes('supabase.auth'))) {
+            localStorage.removeItem(key);
+          }
+        }
+      } catch {
+        // ignore
+      }
       void supabase.auth.signOut().then(() => {
         state.phase = 'login';
         state.userEmail = null;

@@ -24,3 +24,29 @@ export function removeSession(key: string): void {
     // Ignore storage failures.
   }
 }
+
+export function readLocal<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(prefix + key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLocal<T>(key: string, value: T): void {
+  try {
+    localStorage.setItem(prefix + key, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export function removeLocal(key: string): void {
+  try {
+    localStorage.removeItem(prefix + key);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
