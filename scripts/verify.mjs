@@ -42,8 +42,8 @@ test('Abbreviation mapping in subjectShortName', async () => {
   assert.equal(subjectShortName('Essentials of Economics'), 'EoE');
 
   // getQuizThemeTitle
-  assert.equal(getQuizThemeTitle('Quantitative Methods', 'Theme 1'), 'Data and data representations');
-  assert.equal(getQuizThemeTitle(undefined, 'Theme 1'), 'Data and data representations');
+  assert.equal(getQuizThemeTitle('Quantitative Methods', 'Theme 1'), 'Theme 1');
+  assert.equal(getQuizThemeTitle(undefined, 'Theme 1'), 'Theme 1');
   assert.equal(getQuizThemeTitle('Quantitative Methods', 'Theme 2'), 'Theme 2');
   assert.equal(getQuizThemeTitle('Math for Eco', 'Theme 1'), 'Theme 1');
 

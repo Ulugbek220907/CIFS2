@@ -80,9 +80,6 @@ export interface SubjectThemeOption {
 }
 
 export const subjectThemeTitles: Partial<Record<Subject, Partial<Record<Theme, string>>>> = {
-  'Quantitative Methods': {
-    'Theme 1': 'Data and data representations',
-  },
   'Financial Accounting': {
     'Theme 1': 'Intro to Accounting',
     'Theme 2': 'Accounting Cycle',
@@ -128,13 +125,7 @@ export function getQuizThemeTitle(subject?: Subject, theme?: Theme): string {
   if (subject && theme && subjectThemeTitles[subject]?.[theme]) {
     return subjectThemeTitles[subject]![theme]!;
   }
-  if (subject === 'Quantitative Methods' && theme === 'Theme 1') {
-    return 'Data and data representations';
-  }
-  if (theme === 'Theme 1' && (!subject || subject === 'Quantitative Methods')) {
-    return 'Data and data representations';
-  }
-  return theme ?? 'Data and data representations';
+  return theme ?? 'Theme 1';
 }
 
 export function resolveTheme(subject: Subject | undefined, input: string): Theme | null {
