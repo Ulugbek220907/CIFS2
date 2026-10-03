@@ -660,10 +660,53 @@ body.quiz-fullscreen .centered-shell {
   opacity: 0.9;
 }
 
-.quiz-actions,
-.result-actions,
+.quiz-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+  width: 100%;
+}
+
+.question-card .subtle {
+  text-align: center;
+  margin-top: 0.85rem;
+}
+
+.result-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.result-actions .button.primary {
+  width: 100%;
+  max-width: 320px;
+}
+
+.result-actions-secondary {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.result-actions-secondary .button {
+  padding: 0.75rem 1.35rem;
+  font-size: 0.95rem;
+}
+
 .button-row {
   display: flex;
+  justify-content: center;
+  align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
   margin-top: 1rem;
@@ -674,6 +717,7 @@ body.quiz-fullscreen .centered-shell {
   border-radius: 1.2rem;
   padding: 1rem 1.05rem;
   border: 1px solid var(--border);
+  text-align: center;
 }
 
 .feedback strong {
@@ -698,6 +742,7 @@ body.quiz-fullscreen .centered-shell {
 .results-banner {
   padding: 1.35rem 1.5rem;
   border: 1px solid var(--border);
+  text-align: center;
 }
 
 .results-banner .lede {
@@ -707,6 +752,8 @@ body.quiz-fullscreen .centered-shell {
 .result-hero {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: 1.25rem;
   padding: 1.75rem;
 }
@@ -714,8 +761,11 @@ body.quiz-fullscreen .centered-shell {
 .result-card-heading {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: 0.2rem;
 }
+
 
 .result-badge-label {
   display: inline-block;

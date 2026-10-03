@@ -448,8 +448,10 @@ export class QuizApp {
             }</p>
             <div class="result-actions">
               <button class="button primary" type="button" data-action="retake">Retake quiz</button>
-              <button class="button ghost" type="button" data-action="back-themes">Choose another theme</button>
-              <button class="button ghost" type="button" data-action="change-subject">All subjects</button>
+              <div class="result-actions-secondary">
+                <button class="button ghost" type="button" data-action="back-themes">Choose another theme</button>
+                <button class="button ghost" type="button" data-action="change-subject">All subjects</button>
+              </div>
             </div>
           </article>
 
