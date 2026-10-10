@@ -19,7 +19,7 @@ Create a local `.env` file based on `.env.example`:
 ## Supabase setup
 
 1. Create a new Supabase project.
-2. Run the migration in `supabase/migrations/0001_initial.sql`.
+2. Run the migrations in `supabase/migrations/` in order, starting with `0001_initial.sql`. Theme names need `0006_theme_titles.sql`; saving them fails with a message if that table is missing.
 3. Enable Anonymous Sign-Ins in Supabase Auth so public quiz sessions can store results under an auth user id.
 4. Create your admin email/password accounts in Supabase Auth.
 5. Keep public sign-ups disabled.

@@ -2,7 +2,7 @@ import { supabase } from '../supabase';
 import { clearNode, escapeHtml } from '../dom';
 import { renderMathText } from '../math';
 import { getCustomThemeTitle, getQuizThemeTitle, getSubjectThemes, resolveTheme, subjects, themes } from '../constants';
-import { getAllCustomThemeTitles, initThemeTitles, setAllCustomThemeTitles } from '../themeTitles';
+import { initThemeTitles, loadThemeTitlesForAdmin, setAllCustomThemeTitles } from '../themeTitles';
 import type { Question, Subject, Theme } from '../types';
 import 'katex/dist/katex.min.css';
 import '../admin.css';
@@ -1262,12 +1262,21 @@ export function bootAdmin(root: HTMLElement): void {
 
   const refresh = async (): Promise<void> => {
     state.busy = true;
+    // Both the stored-session boot and the login form land here, so names load on either path.
+    initThemeTitles();
     render();
     try {
-      await Promise.all([loadQuestions(), loadAnalytics()]);
+      const [, , themeUploadError] = await Promise.all([
+        loadQuestions(),
+        loadAnalytics(),
+        loadThemeTitlesForAdmin(),
+      ]);
       state.busy = false;
       state.error = null;
       render();
+      if (themeUploadError) {
+        showToast(themeUploadError, 'error');
+      }
     } catch (error) {
       state.busy = false;
       state.error = error instanceof Error ? error.message : 'Failed to load dashboard data.';
@@ -1298,7 +1307,6 @@ export function bootAdmin(root: HTMLElement): void {
       return;
     }
 
-    initThemeTitles();
     state.phase = 'dashboard';
     state.userEmail = user.email ?? null;
     await refresh();
@@ -1398,20 +1406,22 @@ export function bootAdmin(root: HTMLElement): void {
         saveBtn.textContent = 'Saving...';
       }
 
-      void setAllCustomThemeTitles(state.themeManagerSubject, titlesMap)
-        .then(() => {
+      void setAllCustomThemeTitles(state.themeManagerSubject, titlesMap).then(
+        () => {
           state.themeManagerOpen = false;
           showToast(`Theme names saved for ${state.themeManagerSubject}!`, 'success');
           render();
-        })
-        .catch((err: unknown) => {
+        },
+        (err: unknown) => {
+          // Keep the modal open with the typed names so nothing is lost.
           if (saveBtn) {
             saveBtn.disabled = false;
             saveBtn.textContent = 'Save Theme Names';
           }
           const msg = err instanceof Error ? err.message : 'Failed to save theme names.';
           showToast(msg, 'error');
-        });
+        },
+      );
       return;
     }
 

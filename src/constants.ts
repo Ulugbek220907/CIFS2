@@ -80,23 +80,10 @@ export interface SubjectThemeOption {
   hasCustomTitle: boolean;
 }
 
-const STORAGE_KEY = 'cifs_theme_titles';
-
 type ThemeTitlesMap = Record<string, Record<string, string>>;
 
-let customTitlesCache: ThemeTitlesMap = (() => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        return JSON.parse(raw) as ThemeTitlesMap;
-      }
-    }
-  } catch {
-    // Ignore storage errors in test or SSR environments
-  }
-  return {};
-})();
+// Filled by initThemeTitles() in themeTitles.ts, which reads the app's prefixed storage key.
+let customTitlesCache: ThemeTitlesMap = {};
 
 export function updateCustomThemeTitlesCache(titlesMap: ThemeTitlesMap): void {
   customTitlesCache = { ...titlesMap };

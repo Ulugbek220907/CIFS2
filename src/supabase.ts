@@ -15,8 +15,9 @@ const supabaseAnonKey = isSupabaseConfigured && rawKey ? rawKey : 'placeholder-a
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
+    // Session stays in memory only; auto-refresh keeps an open admin tab from failing after the JWT expires.
     persistSession: false,
-    autoRefreshToken: false,
+    autoRefreshToken: true,
     detectSessionInUrl: false,
   },
 });

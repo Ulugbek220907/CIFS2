@@ -11,6 +11,24 @@ const STORAGE_KEY = 'cifs_theme_titles';
 
 type ThemeTitlesMap = Record<string, Record<string, string>>;
 
+interface ThemeTitleRow {
+  subject: string;
+  theme: string;
+  title: string | null;
+}
+
+interface ThemeTitleUpsert {
+  subject: string;
+  theme: string;
+  title: string;
+  updated_at: string;
+}
+
+interface SupabaseErrorLike {
+  code?: string;
+  message?: string;
+}
+
 function getLocalMap(): ThemeTitlesMap {
   try {
     return readLocal<ThemeTitlesMap>(STORAGE_KEY) ?? {};
@@ -19,10 +37,61 @@ function getLocalMap(): ThemeTitlesMap {
   }
 }
 
+function applyTitlesMap(map: ThemeTitlesMap): void {
+  writeLocal(STORAGE_KEY, map);
+  updateCustomThemeTitlesCache(map);
+}
+
+function describeWriteError(error: SupabaseErrorLike): string {
+  const message = error.message ?? '';
+  if (error.code === 'PGRST205' || error.code === '42P01') {
+    return 'The theme_titles table does not exist yet. Run supabase/migrations/0006_theme_titles.sql in the Supabase SQL editor.';
+  }
+  if (error.code === '42501' || /row-level security/i.test(message)) {
+    return 'Supabase refused the change. Sign out and sign back in as an admin.';
+  }
+  if (/jwt/i.test(message)) {
+    return 'Your admin session has expired. Sign in again and retry.';
+  }
+  return message || 'Unknown Supabase error.';
+}
+
+async function assertWriteOk(request: PromiseLike<{ error: SupabaseErrorLike | null }>): Promise<void> {
+  const { error } = await request;
+  if (error) {
+    throw new Error(`Theme names were not saved. ${describeWriteError(error)}`);
+  }
+}
+
+/** Returns the Supabase copy as a map, or null when Supabase is unset or the read fails. */
+async function fetchRemoteTitles(): Promise<ThemeTitlesMap | null> {
+  if (!isSupabaseConfigured) return null;
+  try {
+    const { data, error } = await supabase
+      .from('theme_titles')
+      .select('subject, theme, title');
+
+    if (error || !Array.isArray(data)) return null;
+
+    const remoteMap: ThemeTitlesMap = {};
+    for (const row of data as ThemeTitleRow[]) {
+      const title = row.title?.trim();
+      if (!title) continue;
+      remoteMap[row.subject] ??= {};
+      remoteMap[row.subject][row.theme] = title;
+    }
+    return remoteMap;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Copies the saved names from localStorage into memory. Synchronous, so anything
+ * rendered right after this call already shows the custom names.
+ */
 export function initThemeTitles(): void {
-  const local = getLocalMap();
-  updateCustomThemeTitlesCache(local);
-  void syncThemeTitlesFromRemote();
+  updateCustomThemeTitlesCache(getLocalMap());
 }
 
 export function getAllCustomThemeTitles(subject: Subject): Record<Theme, string> {
@@ -38,118 +107,111 @@ export async function setCustomThemeTitle(
   theme: Theme,
   title: string,
 ): Promise<void> {
-  const trimmed = title.trim();
-  const current = getLocalMap();
-  if (!current[subject]) {
-    current[subject] = {};
-  }
-
-  if (trimmed) {
-    current[subject][theme] = trimmed;
-  } else {
-    delete current[subject][theme];
-  }
-
-  writeLocal(STORAGE_KEY, current);
-  updateCustomThemeTitlesCache(current);
-
-  if (!isSupabaseConfigured) return;
-
-  try {
-    if (trimmed) {
-      await supabase.from('theme_titles').upsert(
-        {
-          subject,
-          theme,
-          title: trimmed,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'subject,theme' },
-      );
-    } else {
-      await supabase
-        .from('theme_titles')
-        .delete()
-        .eq('subject', subject)
-        .eq('theme', theme);
-    }
-  } catch {
-    // Local storage keeps functioning as fallback
-  }
+  await setAllCustomThemeTitles(subject, { [theme]: title });
 }
 
+/**
+ * Saves the given themes for one subject. Supabase is written first and any
+ * rejected write throws, so the local copy only changes when the database did.
+ * Blank titles clear that theme back to its standard name.
+ */
 export async function setAllCustomThemeTitles(
   subject: Subject,
   titles: Record<string, string>,
 ): Promise<void> {
   const current = getLocalMap();
-  if (!current[subject]) {
-    current[subject] = {};
-  }
+  const nextSubjectTitles: Record<string, string> = { ...(current[subject] ?? {}) };
+  const updatedAt = new Date().toISOString();
 
-  const toUpsert: Array<{ subject: string; theme: string; title: string; updated_at: string }> = [];
-  const toDelete: string[] = [];
+  const toUpsert: ThemeTitleUpsert[] = [];
+  const toClear: string[] = [];
 
   for (const [theme, rawTitle] of Object.entries(titles)) {
     const trimmed = (rawTitle ?? '').trim();
     if (trimmed) {
-      current[subject][theme] = trimmed;
-      toUpsert.push({
-        subject,
-        theme,
-        title: trimmed,
-        updated_at: new Date().toISOString(),
-      });
+      nextSubjectTitles[theme] = trimmed;
+      toUpsert.push({ subject, theme, title: trimmed, updated_at: updatedAt });
     } else {
-      delete current[subject][theme];
-      toDelete.push(theme);
+      delete nextSubjectTitles[theme];
+      toClear.push(theme);
     }
   }
 
-  writeLocal(STORAGE_KEY, current);
-  updateCustomThemeTitlesCache(current);
-
-  if (!isSupabaseConfigured) return;
-
-  try {
+  if (isSupabaseConfigured) {
     if (toUpsert.length > 0) {
-      await supabase.from('theme_titles').upsert(toUpsert, { onConflict: 'subject,theme' });
+      await assertWriteOk(
+        supabase.from('theme_titles').upsert(toUpsert, { onConflict: 'subject,theme' }),
+      );
     }
-    for (const theme of toDelete) {
-      await supabase
-        .from('theme_titles')
-        .delete()
-        .eq('subject', subject)
-        .eq('theme', theme);
+    if (toClear.length > 0) {
+      await assertWriteOk(
+        supabase.from('theme_titles').delete().eq('subject', subject).in('theme', toClear),
+      );
     }
-  } catch {
-    // Graceful fallback to local storage
   }
+
+  applyTitlesMap({ ...current, [subject]: nextSubjectTitles });
 }
 
-export async function syncThemeTitlesFromRemote(): Promise<void> {
-  if (!isSupabaseConfigured) return;
-  try {
-    const { data, error } = await supabase
-      .from('theme_titles')
-      .select('subject, theme, title');
+/**
+ * Public pages: replaces the local copy with the Supabase copy. Returns false when
+ * Supabase is not configured or the read fails, in which case the local copy is kept.
+ */
+export async function syncThemeTitlesFromRemote(): Promise<boolean> {
+  const remoteMap = await fetchRemoteTitles();
+  if (!remoteMap) return false;
+  applyTitlesMap(remoteMap);
+  return true;
+}
 
-    if (!error && Array.isArray(data)) {
-      const remoteMap: ThemeTitlesMap = {};
-      for (const row of data as Array<{ subject: string; theme: string; title: string }>) {
-        if (!remoteMap[row.subject]) {
-          remoteMap[row.subject] = {};
-        }
-        if (row.title && row.title.trim()) {
-          remoteMap[row.subject][row.theme] = row.title.trim();
-        }
-      }
-      writeLocal(STORAGE_KEY, remoteMap);
-      updateCustomThemeTitlesCache(remoteMap);
-    }
-  } catch {
-    // Ignore if table does not exist
+/**
+ * Admin dashboard: loads the Supabase copy. Names that exist only in this browser
+ * (saved before the database was reachable) are uploaded instead of being dropped.
+ * Returns an error message when that upload fails, otherwise null.
+ */
+export async function loadThemeTitlesForAdmin(): Promise<string | null> {
+  initThemeTitles();
+  const remoteMap = await fetchRemoteTitles();
+  if (!remoteMap) return null;
+
+  const localOnly = findLocalOnlyTitles(getLocalMap(), remoteMap);
+  const merged: ThemeTitlesMap = {};
+  for (const [subject, titles] of Object.entries(remoteMap)) {
+    merged[subject] = { ...titles };
   }
+  for (const row of localOnly) {
+    merged[row.subject] ??= {};
+    merged[row.subject][row.theme] = row.title;
+  }
+
+  let uploadError: string | null = null;
+  if (localOnly.length > 0) {
+    try {
+      await assertWriteOk(
+        supabase.from('theme_titles').upsert(localOnly, { onConflict: 'subject,theme' }),
+      );
+    } catch (error) {
+      uploadError = error instanceof Error ? error.message : 'Theme names were not saved.';
+    }
+  }
+
+  // Keep unuploaded names visible in this browser; the returned error explains why they are not in the database yet.
+  applyTitlesMap(merged);
+  return uploadError;
+}
+
+function findLocalOnlyTitles(local: ThemeTitlesMap, remote: ThemeTitlesMap): ThemeTitleUpsert[] {
+  const updatedAt = new Date().toISOString();
+  const rows: ThemeTitleUpsert[] = [];
+  for (const [subject, titles] of Object.entries(local)) {
+    for (const [theme, rawTitle] of Object.entries(titles)) {
+      const title = rawTitle?.trim();
+      if (title && !remote[subject]?.[theme]) {
+        rows.push({ subject, theme, title, updated_at: updatedAt });
+      }
+    }
+  }
+  return rows;
 }
 
 export { getCustomThemeTitle };
