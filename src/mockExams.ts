@@ -110,14 +110,14 @@ export async function saveMockExam(subject: Subject, input: MockExamInput, id?: 
     source_themes: input.source_themes,
     question_count: input.question_count,
   };
-  const existing = getLocalExams();
+  const createdAtById = new Map(getLocalExams().map((exam) => [exam.id, exam.created_at]));
   let saved: MockExam | null;
 
   if (!isSupabaseConfigured) {
     saved = toMockExam({
       ...fields,
       id: id ?? uid(),
-      created_at: existing.find((exam) => exam.id === id)?.created_at ?? new Date().toISOString(),
+      created_at: (id && createdAtById.get(id)) || new Date().toISOString(),
     });
   } else if (id) {
     // RLS turns a refused UPDATE into "0 rows" rather than an error, so require the row back.
@@ -146,25 +146,29 @@ export async function saveMockExam(subject: Subject, input: MockExamInput, id?: 
     throw new Error(`${saveContext.failure} The details were not valid.`);
   }
 
+  // Re-read the list now: a delete or sync may have landed while the request was in flight.
   const result = saved;
-  applyExams([...existing.filter((exam) => exam.id !== result.id), result]);
+  applyExams([...getLocalExams().filter((exam) => exam.id !== result.id), result]);
   return result;
 }
 
 export async function deleteMockExam(id: string): Promise<void> {
   if (isSupabaseConfigured) {
-    const { error } = await supabase.from('mock_exams').delete().eq('id', id).select('id');
+    const { data, error } = await supabase.from('mock_exams').delete().eq('id', id).select('id');
     if (error) throw new Error(`${deleteContext.failure} ${describeWriteError(error, deleteContext)}`);
 
-    // RLS turns a refused DELETE into "0 rows" rather than an error, so confirm the row is gone.
-    const check = await supabase.from('mock_exams').select('id').eq('id', id);
-    if (check.error) {
-      throw new Error(`${deleteContext.failure} ${describeWriteError(check.error, deleteContext)}`);
-    }
-    if (Array.isArray(check.data) && check.data.length > 0) {
-      throw new Error(
-        `${deleteContext.failure} Supabase refused the delete. Sign out and sign back in as an admin.`,
-      );
+    // RLS turns a refused DELETE into "0 rows" rather than an error. Zero rows also means the exam
+    // was already gone, so only treat it as a refusal when the row still exists.
+    if (Array.isArray(data) && data.length === 0) {
+      const check = await supabase.from('mock_exams').select('id').eq('id', id);
+      if (check.error) {
+        throw new Error(`${deleteContext.failure} ${describeWriteError(check.error, deleteContext)}`);
+      }
+      if (Array.isArray(check.data) && check.data.length > 0) {
+        throw new Error(
+          `${deleteContext.failure} Supabase refused the delete. Sign out and sign back in as an admin.`,
+        );
+      }
     }
   }
 

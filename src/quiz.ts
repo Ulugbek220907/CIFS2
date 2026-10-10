@@ -5,6 +5,7 @@ import {
   cifsSubjects,
   getMockExam,
   getQuizThemeTitle,
+  getSubjectAliases,
   getSubjectOutline,
   level4Subjects,
   passPercent,
@@ -125,7 +126,9 @@ function getMockQuestionCacheKey(subject: Subject, exam: MockExam): string {
 }
 
 function mockLabel(title?: string | null): string {
-  return title ? `Mock Exam: ${title}` : 'Mock Exam';
+  if (!title) return 'Mock Exam';
+  // Avoid "Mock Exam: Mock Exam 1" when the admin already put it in the title.
+  return /mock/i.test(title) ? title : `Mock Exam: ${title}`;
 }
 
 /** Topic label for a stored attempt; old rows without mock fields fall through to the theme. */
@@ -182,7 +185,7 @@ async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Questio
   const { data, error } = await supabase
     .from('questions')
     .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
-    .in('subject', getSubjectFilter(subject))
+    .in('subject', getSubjectAliases(subject))
     .eq('theme', theme)
     .order('created_at', { ascending: false });
 
@@ -199,12 +202,6 @@ async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Questio
   return pool;
 }
 
-function getSubjectFilter(subject: Subject): Subject[] {
-  return subject === 'Introduction to Business and Economics'
-    ? ['Introduction to Business and Economics', 'Foundations of Economics']
-    : [subject];
-}
-
 async function loadMockQuestionPool(subject: Subject, exam: MockExam): Promise<Question[]> {
   const cacheKey = getMockQuestionCacheKey(subject, exam);
   const cached = readSession<{ createdAt: number; pool: Question[] }>(cacheKey);
@@ -212,18 +209,25 @@ async function loadMockQuestionPool(subject: Subject, exam: MockExam): Promise<Q
     return cached.pool;
   }
 
-  const { data, error } = await supabase
-    .from('questions')
-    .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
-    .in('subject', getSubjectFilter(subject))
-    .in('theme', exam.source_themes)
-    .order('created_at', { ascending: false });
+  // One request per theme: PostgREST caps a response at 1000 rows, and a single query across
+  // many themes could silently drop questions from some of them.
+  const results = await Promise.all(
+    exam.source_themes.map((theme) =>
+      supabase
+        .from('questions')
+        .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
+        .in('subject', getSubjectAliases(subject))
+        .eq('theme', theme)
+        .order('created_at', { ascending: false }),
+    ),
+  );
 
-  if (error) {
-    throw new Error(error.message);
+  const failed = results.find((result) => result.error);
+  if (failed?.error) {
+    throw new Error(failed.error.message);
   }
 
-  const pool = (data ?? []) as Question[];
+  const pool = results.flatMap((result) => (result.data ?? []) as Question[]);
   if (pool.length < exam.question_count) {
     throw new InsufficientQuestionsError(
       subject,
@@ -862,12 +866,10 @@ export class QuizApp {
       let mockExam: MockExam | null = null;
       let questions: Question[];
       if (config.mockExamId) {
-        // A deleted or stale exam may only be in our cache, so check the server once before giving up.
+        // The list may be older than the server (exam edited or deleted since the page loaded), so
+        // refresh first. If the refresh fails (offline, table missing) the cached copy is used.
+        await syncMockExamsFromRemote().catch(() => false);
         mockExam = getMockExam(config.mockExamId) ?? null;
-        if (!mockExam) {
-          await syncMockExamsFromRemote().catch(() => false);
-          mockExam = getMockExam(config.mockExamId) ?? null;
-        }
         if (!mockExam) {
           throw new MockExamUnavailableError();
         }

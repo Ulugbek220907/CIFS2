@@ -28,7 +28,7 @@ export function normalizeMockExamInput(
   if (!title) {
     return { ok: false, error: 'Give the mock exam a title.' };
   }
-  if (title.length > MOCK_EXAM_TITLE_MAX) {
+  if ([...title].length > MOCK_EXAM_TITLE_MAX) {
     return { ok: false, error: `Title must be ${MOCK_EXAM_TITLE_MAX} characters or fewer.` };
   }
 

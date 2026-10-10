@@ -22,7 +22,7 @@ create table if not exists public.mock_exams (
       'Essentials of Economics'
     )
   ),
-  title text not null check (char_length(btrim(title)) between 1 and 80),
+  title text not null check (char_length(btrim(title)) between 1 and 80 and title ~ '[^[:space:]]'),
   -- Number of themes listed before the exam: 0 = above Theme 1, 4 = right after Theme 4.
   after_theme integer not null default 0 check (after_theme between 0 and 12),
   source_themes text[] not null check (
@@ -69,5 +69,21 @@ create policy "mock_exams are deletable by admins"
   on public.mock_exams
   for delete
   using (public.is_admin());
+
+-- Keep updated_at honest for edits made from any client, including the SQL editor.
+create or replace function public.mock_exams_touch_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists mock_exams_touch_updated_at on public.mock_exams;
+create trigger mock_exams_touch_updated_at
+  before update on public.mock_exams
+  for each row execute function public.mock_exams_touch_updated_at();
 
 select pg_notify('pgrst', 'reload schema');

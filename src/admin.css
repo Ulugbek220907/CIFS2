@@ -2652,3 +2652,10 @@
     white-space: nowrap;
   }
 }
+
+/* Keep toasts clear of the modal footer (Save / Close) while a modal is open. */
+body:has(.theme-modal-backdrop) .admin-toast-container {
+  top: 1.25rem;
+  bottom: auto;
+  flex-direction: column;
+}

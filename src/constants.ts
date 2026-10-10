@@ -166,6 +166,13 @@ export function getSubjectOutline(subject?: Subject): SubjectOutlineItem[] {
   return outline;
 }
 
+/** Subject names whose questions belong to this subject (IBE still has rows under its legacy name). */
+export function getSubjectAliases(subject: Subject): Subject[] {
+  return subject === 'Introduction to Business and Economics'
+    ? ['Introduction to Business and Economics', 'Foundations of Economics']
+    : [subject];
+}
+
 export function getQuizThemeTitle(subject?: Subject, theme?: Theme): string {
   const custom = getCustomThemeTitle(subject, theme);
   if (custom) {

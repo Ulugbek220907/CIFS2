@@ -7,6 +7,7 @@ import {
   getMockExams,
   getQuizThemeTitle,
   getSubjectOutline,
+  getSubjectAliases,
   getSubjectThemes,
   resolveTheme,
   subjects,
@@ -281,7 +282,7 @@ export function computeSubjectBreakdown(events: AnalyticsEvent[]): SubjectBreakd
     const item = subjectMap.get(sub)!;
     // Mock exams have no theme of their own, so they get a row per exam title.
     const mockTitle =
-      typeof event.metadata?.mock_exam_title === 'string' ? event.metadata.mock_exam_title.trim() : '';
+      typeof event.metadata?.mock_exam_title === 'string' ? event.metadata.mock_exam_title.trim().slice(0, 80) : '';
     const themeKey = mockTitle ? `Mock Exam: ${mockTitle}` : event.theme || 'Theme 1';
 
     if (!item.themes.has(themeKey)) {
@@ -612,11 +613,11 @@ function mockDraftFromExam(exam: MockExam): MockDraft {
 }
 
 function countThemeQuestions(questions: Question[], subject: Subject, theme: string): number {
-  return questions.filter((question) => question.subject === subject && question.theme === theme).length;
+  return questions.filter((question) => getSubjectAliases(subject).includes(question.subject) && question.theme === theme).length;
 }
 
 function countAvailableQuestions(questions: Question[], subject: Subject, sourceThemes: readonly string[]): number {
-  return questions.filter((question) => question.subject === subject && sourceThemes.includes(question.theme)).length;
+  return questions.filter((question) => getSubjectAliases(subject).includes(question.subject) && sourceThemes.includes(question.theme)).length;
 }
 
 function describeMockPosition(subject: Subject, afterTheme: number): string {
@@ -667,8 +668,8 @@ function renderMockExamRow(state: AdminState, exam: MockExam): string {
         <p class="mock-row-availability ${availability.short ? 'is-warning' : ''}">${escapeHtml(availability.text)}</p>
       </div>
       <div class="mock-row-actions">
-        <button class="action-btn-sm" type="button" data-action="edit-mock" data-id="${id}">Edit</button>
-        <button class="action-btn-sm danger" type="button" data-action="delete-mock" data-id="${id}">Delete</button>
+        <button class="action-btn-sm" type="button" data-action="edit-mock" data-id="${id}" aria-label="Edit ${escapeHtml(exam.title)}">Edit</button>
+        <button class="action-btn-sm danger" type="button" data-action="delete-mock" data-id="${id}" aria-label="Delete ${escapeHtml(exam.title)}">Delete</button>
       </div>
     </li>
   `;
@@ -708,7 +709,7 @@ function renderMockManagerModal(state: AdminState): string {
           <input type="checkbox" name="source_themes" value="${escapeHtml(theme)}" ${draft.source_themes.includes(theme) ? 'checked' : ''} />
           <span class="mock-theme-text">
             <span class="mock-theme-number">${escapeHtml(theme)}</span>
-            ${custom ? `<span class="mock-theme-name">${escapeHtml(custom)}</span>` : ''}
+            ${custom ? `<span class="mock-theme-name" title="${escapeHtml(custom)}">${escapeHtml(custom)}</span>` : ''}
           </span>
           <span class="mock-theme-count">${count} q</span>
         </label>
@@ -1756,8 +1757,9 @@ export function bootAdmin(root: HTMLElement): void {
         () => {
           state.mockSaving = false;
           showToast(editingId ? 'Mock exam updated' : 'Mock exam added', 'success');
-          // Back to add mode so several exams can be added in a row, unless the admin switched subject meanwhile.
-          if (state.mockManagerSubject === subject) {
+          // Back to add mode so several exams can be added in a row, unless the admin moved on meanwhile
+          // (switched subject, or started editing a different exam).
+          if (state.mockManagerSubject === subject && state.mockEditingId === editingId) {
             resetMockForm();
           }
           render();
@@ -2045,19 +2047,31 @@ export function bootAdmin(root: HTMLElement): void {
     }
   });
 
+  let lastPressTarget: EventTarget | null = null;
+  root.addEventListener('mousedown', (event) => {
+    lastPressTarget = event.target;
+  });
+
   root.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     if (!target) {
       return;
     }
 
+    // A drag that starts inside the dialog (e.g. selecting text) and ends on the backdrop is not a backdrop click.
+    const pressedOn = lastPressTarget;
+    lastPressTarget = null;
+    const backdropClick = pressedOn === null || pressedOn === target;
+
     if (target.classList.contains('mock-modal-backdrop')) {
-      state.mockManagerOpen = false;
-      render();
+      if (backdropClick) {
+        state.mockManagerOpen = false;
+        render();
+      }
       return;
     }
 
-    if (target.classList.contains('theme-modal-backdrop')) {
+    if (target.classList.contains('theme-modal-backdrop') && backdropClick) {
       state.themeManagerOpen = false;
       render();
       return;
@@ -2115,7 +2129,7 @@ export function bootAdmin(root: HTMLElement): void {
 
     if (action.dataset.action === 'edit-mock') {
       const exam = getMockExam(action.dataset.id);
-      if (!exam) {
+      if (!exam || state.mockSaving) {
         return;
       }
       state.mockManagerSubject = exam.subject;
@@ -2136,7 +2150,7 @@ export function bootAdmin(root: HTMLElement): void {
 
     if (action.dataset.action === 'delete-mock') {
       const exam = getMockExam(action.dataset.id);
-      if (!exam) {
+      if (!exam || state.mockSaving) {
         return;
       }
       if (!window.confirm(`Delete the mock exam "${exam.title}"? Students will no longer see it.`)) {
