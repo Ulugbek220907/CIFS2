@@ -3,8 +3,9 @@ import { clearNode, escapeHtml, formatDuration, formatPercent, shuffle, uid } fr
 import { renderMathText } from './math';
 import {
   cifsSubjects,
+  getMockExam,
   getQuizThemeTitle,
-  getSubjectThemes,
+  getSubjectOutline,
   level4Subjects,
   passPercent,
   quizLength,
@@ -13,15 +14,19 @@ import {
   themes,
 } from './constants';
 import { initThemeTitles, syncThemeTitlesFromRemote } from './themeTitles';
+import { initMockExams, syncMockExamsFromRemote } from './mockExams';
+import { describeCoverage, pickBalancedQuestions } from './mockExam';
 import { readLocal, readSession, writeLocal, writeSession } from './storage';
 import { trackQuizStart, trackQuizComplete } from './telemetry';
-import type { AnswerReview, Question, ResultRow, Subject, Theme } from './types';
+import type { AnswerReview, MockExam, Question, ResultRow, Subject, Theme } from './types';
 
 export type QuizLevel = 'CIFS' | 'Level 4';
 
 interface QuizConfig {
   subject: Subject;
   theme: Theme;
+  /** Set for mock exam attempts; `theme` is then only a placeholder. */
+  mockExamId?: string;
 }
 
 type QuizPhase = 'setup' | 'loading' | 'question' | 'review' | 'results' | 'error';
@@ -31,14 +36,33 @@ export class InsufficientQuestionsError extends Error {
   readonly theme: Theme;
   readonly availableCount: number;
   readonly requiredCount: number;
+  readonly mockExamTitle?: string;
 
-  constructor(subject: Subject, theme: Theme, availableCount: number, requiredCount: number) {
-    super(`Questions for ${subject} (${theme}) are currently being prepared.`);
+  constructor(
+    subject: Subject,
+    theme: Theme,
+    availableCount: number,
+    requiredCount: number,
+    mockExamTitle?: string,
+  ) {
+    super(
+      mockExamTitle
+        ? `Questions for ${subject} (Mock Exam: ${mockExamTitle}) are currently being prepared.`
+        : `Questions for ${subject} (${theme}) are currently being prepared.`,
+    );
     this.name = 'InsufficientQuestionsError';
     this.subject = subject;
     this.theme = theme;
     this.availableCount = availableCount;
     this.requiredCount = requiredCount;
+    this.mockExamTitle = mockExamTitle;
+  }
+}
+
+class MockExamUnavailableError extends Error {
+  constructor() {
+    super('This mock exam is no longer available.');
+    this.name = 'MockExamUnavailableError';
   }
 }
 
@@ -58,6 +82,11 @@ interface QuizState {
   errorKind?: 'insufficient' | 'connection' | 'generic';
   errorSubject?: Subject;
   errorTheme?: Theme;
+  errorMockTitle?: string;
+  /** Overrides the default copy of the generic error screen (e.g. a deleted mock exam). */
+  errorNotice?: string;
+  /** The mock exam being attempted, kept so its title survives the exam being edited or deleted mid-quiz. */
+  mockExam: MockExam | null;
   result: ResultRow | null;
   history: ResultRow[];
   busy: boolean;
@@ -90,6 +119,24 @@ function getQuestionCacheKey(subject: Subject, theme: Theme): string {
   return `${questionCachePrefix}${subject}::${theme}`;
 }
 
+// Includes the exam's themes and size, so editing an exam never serves a stale pool.
+function getMockQuestionCacheKey(subject: Subject, exam: MockExam): string {
+  return `${questionCachePrefix}mock::${subject}::${exam.id}::${exam.source_themes.join(',')}::${exam.question_count}`;
+}
+
+function mockLabel(title?: string | null): string {
+  return title ? `Mock Exam: ${title}` : 'Mock Exam';
+}
+
+/** Topic label for a stored attempt; old rows without mock fields fall through to the theme. */
+function resultTopicLabel(item: ResultRow): string {
+  if (item.mock_exam_id) {
+    return mockLabel(item.mock_exam_title ?? getMockExam(item.mock_exam_id)?.title);
+  }
+  const themeTitle = getQuizThemeTitle(item.subject, item.theme);
+  return themeTitle && themeTitle !== item.theme ? `${item.theme}: ${themeTitle}` : item.theme;
+}
+
 function loadConfig(): QuizConfig {
   const saved = readSession<QuizConfig>(activeConfigKey);
   if (!saved) {
@@ -102,6 +149,10 @@ function loadConfig(): QuizConfig {
 
   if (!subjects.includes(saved.subject) || !themes.includes(saved.theme)) {
     return defaultConfig();
+  }
+
+  if (typeof saved.mockExamId !== 'string' || !saved.mockExamId) {
+    delete saved.mockExamId;
   }
 
   return saved;
@@ -128,15 +179,10 @@ async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Questio
     return cached.pool;
   }
 
-  const subjectFilter =
-    subject === 'Introduction to Business and Economics'
-      ? ['Introduction to Business and Economics', 'Foundations of Economics']
-      : [subject];
-
   const { data, error } = await supabase
     .from('questions')
     .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
-    .in('subject', subjectFilter)
+    .in('subject', getSubjectFilter(subject))
     .eq('theme', theme)
     .order('created_at', { ascending: false });
 
@@ -147,6 +193,45 @@ async function loadQuestionPool(subject: Subject, theme: Theme): Promise<Questio
   const pool = (data ?? []) as Question[];
   if (pool.length < quizLength) {
     throw new InsufficientQuestionsError(subject, theme, pool.length, quizLength);
+  }
+
+  writeSession(cacheKey, { createdAt: Date.now(), pool });
+  return pool;
+}
+
+function getSubjectFilter(subject: Subject): Subject[] {
+  return subject === 'Introduction to Business and Economics'
+    ? ['Introduction to Business and Economics', 'Foundations of Economics']
+    : [subject];
+}
+
+async function loadMockQuestionPool(subject: Subject, exam: MockExam): Promise<Question[]> {
+  const cacheKey = getMockQuestionCacheKey(subject, exam);
+  const cached = readSession<{ createdAt: number; pool: Question[] }>(cacheKey);
+  if (cached && Date.now() - cached.createdAt < poolCacheTtlMs && cached.pool.length >= exam.question_count) {
+    return cached.pool;
+  }
+
+  const { data, error } = await supabase
+    .from('questions')
+    .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
+    .in('subject', getSubjectFilter(subject))
+    .in('theme', exam.source_themes)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const pool = (data ?? []) as Question[];
+  if (pool.length < exam.question_count) {
+    throw new InsufficientQuestionsError(
+      subject,
+      exam.source_themes[0] ?? themes[0],
+      pool.length,
+      exam.question_count,
+      exam.title,
+    );
   }
 
   writeSession(cacheKey, { createdAt: Date.now(), pool });
@@ -190,16 +275,22 @@ export class QuizApp {
       result: null,
       history: loadHistory(),
       busy: false,
+      mockExam: null,
     };
   }
 
   mount(): void {
     initThemeTitles();
+    initMockExams();
     document.body.classList.remove('quiz-fullscreen');
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('submit', this.handleSubmit);
     this.render();
-    void syncThemeTitlesFromRemote().then(() => {
+    // A failed mock exam sync (e.g. the table is not created yet) stays silent for students.
+    void Promise.all([
+      syncThemeTitlesFromRemote().catch(() => false),
+      syncMockExamsFromRemote().catch(() => false),
+    ]).then(() => {
       if (this.state.phase === 'setup') {
         this.render();
       }
@@ -275,8 +366,24 @@ export class QuizApp {
           <button class="back-link" type="button" data-action="back-subjects">← Choose Another Subject</button>
           <div class="selected-subject-header" id="active-subject-title">${escapeHtml(activeSubject ?? config.subject)}</div>
           <div class="theme-options">
-            ${getSubjectThemes(activeSubject ?? config.subject)
+            ${getSubjectOutline(activeSubject ?? config.subject)
               .map((item) => {
+                if (item.kind === 'mock') {
+                  const exam = item.exam;
+                  return `
+                  <button class="theme-btn mock-exam-btn" type="button" data-action="mock-select" data-mock-id="${escapeHtml(exam.id)}">
+                    <div class="theme-btn-content">
+                      <span class="theme-btn-tag mock-exam-tag">Mock Exam</span>
+                      <span class="mock-exam-text">
+                        <span class="theme-btn-title">${escapeHtml(exam.title)}</span>
+                        <span class="mock-exam-meta">${escapeHtml(describeCoverage(exam.source_themes))} · ${exam.question_count} questions</span>
+                      </span>
+                    </div>
+                    <span class="theme-btn-arrow" aria-hidden="true">→</span>
+                  </button>
+                `;
+                }
+
                 const hasCustomTitle = item.hasCustomTitle;
                 return `
                   <button class="theme-btn" type="button" data-action="theme-select" data-theme="${item.theme}">
@@ -299,8 +406,10 @@ export class QuizApp {
     const subject = this.state.config?.subject;
     const theme = this.state.config?.theme;
     const themeTitle = subject && theme ? getQuizThemeTitle(subject, theme) : theme;
-    const topicLabel =
-      subject && theme
+    const mockExamId = this.state.config?.mockExamId;
+    const topicLabel = mockExamId
+      ? `${subject ?? 'your'} · ${mockLabel(getMockExam(mockExamId)?.title)}`
+      : subject && theme
         ? `${subject} · ${themeTitle && themeTitle !== theme ? `${theme}: ${themeTitle}` : theme}`
         : 'your quiz';
     return `
@@ -318,8 +427,12 @@ export class QuizApp {
       const theme = this.state.errorTheme ?? this.state.config?.theme ?? '';
       const themeTitle =
         subject && theme ? getQuizThemeTitle(subject as Subject, theme as Theme) : theme;
-      const themePillLabel =
-        themeTitle && themeTitle !== theme ? `${theme} (${themeTitle})` : theme;
+      const mockTitle = this.state.errorMockTitle;
+      const themePillLabel = mockTitle
+        ? mockLabel(mockTitle)
+        : themeTitle && themeTitle !== theme
+          ? `${theme} (${themeTitle})`
+          : theme;
 
       return `
         <section class="panel centered-shell topic-unavailable-panel">
@@ -336,7 +449,7 @@ export class QuizApp {
           <h2 class="unavailable-title">Questions are on the way!</h2>
           <div class="unavailable-topic-pill">
             <span class="topic-pill-subject">${escapeHtml(subject)}</span>
-            ${theme ? `<span class="topic-pill-divider">·</span><span class="topic-pill-theme">${escapeHtml(themePillLabel)}</span>` : ''}
+            ${theme || mockTitle ? `<span class="topic-pill-divider">·</span><span class="topic-pill-theme">${escapeHtml(themePillLabel)}</span>` : ''}
           </div>
           <p class="lede unavailable-lede">
             The question bank for this module is currently being finalized and reviewed. Practice questions will be published here soon.
@@ -352,6 +465,7 @@ export class QuizApp {
       `;
     }
 
+    const notice = this.state.errorNotice;
     return `
       <section class="panel centered-shell topic-unavailable-panel">
         <div class="empty-topic-icon" aria-hidden="true">
@@ -362,13 +476,21 @@ export class QuizApp {
           </svg>
         </div>
         <div class="eyebrow eyebrow-coming-soon">Service Notice</div>
-        <h2 class="unavailable-title">Unable to load questions</h2>
+        <h2 class="unavailable-title">${notice ? 'Mock exam unavailable' : 'Unable to load questions'}</h2>
         <p class="lede unavailable-lede">
-          We could not reach the question server at this moment. Please check your internet connection or try again shortly.
+          ${
+            notice
+              ? escapeHtml(notice)
+              : 'We could not reach the question server at this moment. Please check your internet connection or try again shortly.'
+          }
         </p>
         <div class="button-row unavailable-actions">
-          <button class="button primary" type="button" data-action="retake">Try again</button>
-          <button class="button ghost" type="button" data-action="reset-setup">Back to subjects</button>
+          ${
+            notice
+              ? '<button class="button primary" type="button" data-action="back-themes">Choose another theme</button>'
+              : '<button class="button primary" type="button" data-action="retake">Try again</button>'
+          }
+          <button class="button ghost" type="button" data-action="reset-setup">${notice ? 'All subjects' : 'Back to subjects'}</button>
         </div>
       </section>
     `;
@@ -376,7 +498,9 @@ export class QuizApp {
 
   private renderQuiz(): string {
     const question = this.state.questions[this.state.currentIndex];
-    const quizTitle = getQuizThemeTitle(this.state.config?.subject, this.state.config?.theme);
+    const quizTitle = this.state.mockExam
+      ? mockLabel(this.state.mockExam.title)
+      : getQuizThemeTitle(this.state.config?.subject, this.state.config?.theme);
     return `
       <section class="panel quiz-shell">
         <div class="quiz-topbar-centered">
@@ -434,16 +558,18 @@ export class QuizApp {
     const verdictClass = result.percent >= passPercent ? 'good' : 'bad';
     const verdict = result.percent >= passPercent ? 'Pass' : 'Needs more work';
     const history = this.state.history && this.state.history.length > 0 ? this.state.history : loadHistory();
+    const isMockResult = Boolean(result.mock_exam_id);
     const resultThemeTitle = getQuizThemeTitle(result.subject, result.theme);
-    const resultThemeDisplay =
-      resultThemeTitle && resultThemeTitle !== result.theme
+    const resultThemeDisplay = isMockResult
+      ? resultTopicLabel(result)
+      : resultThemeTitle && resultThemeTitle !== result.theme
         ? `${result.theme} (${resultThemeTitle})`
         : result.theme;
 
     return `
       <section class="results-stack">
         <article class="panel results-banner ${verdictClass}">
-          <div class="eyebrow">Quiz completed</div>
+          <div class="eyebrow">${isMockResult ? 'Mock exam completed' : 'Quiz completed'}</div>
           <h2>${verdict}</h2>
           <p class="lede">Your attempt for <strong>${escapeHtml(result.subject)}</strong> / <strong>${escapeHtml(resultThemeDisplay)}</strong> is complete.</p>
         </article>
@@ -469,9 +595,13 @@ export class QuizApp {
               </div>
             </div>
             <p class="result-summary-copy">${
-              result.percent >= passPercent
-                ? 'Great job! You passed this theme with flying colors.'
-                : 'Keep practicing! You can retake this theme or try another one.'
+              isMockResult
+                ? result.percent >= passPercent
+                  ? 'Great job! You passed this mock exam.'
+                  : 'Keep practicing! You can retake this mock exam or review the themes it covers.'
+                : result.percent >= passPercent
+                  ? 'Great job! You passed this theme with flying colors.'
+                  : 'Keep practicing! You can retake this theme or try another one.'
             }</p>
             <div class="result-actions">
               <button class="button primary" type="button" data-action="retake">Retake quiz</button>
@@ -498,11 +628,7 @@ export class QuizApp {
                       .map((item) => {
                         const isCurrent = item.id === result.id;
                         const itemVerdict = item.percent >= passPercent ? 'good' : 'bad';
-                        const itemThemeTitle = getQuizThemeTitle(item.subject, item.theme);
-                        const itemThemeDisplay =
-                          itemThemeTitle && itemThemeTitle !== item.theme
-                            ? `${item.theme}: ${itemThemeTitle}`
-                            : item.theme;
+                        const itemThemeDisplay = resultTopicLabel(item);
                         return `
                           <div class="history-item ${isCurrent ? 'current-attempt' : ''}">
                             <div class="history-item-details">
@@ -594,6 +720,18 @@ export class QuizApp {
       return;
     }
 
+    if (action === 'mock-select') {
+      const mockExamId = actionButton.dataset.mockId;
+      if (!mockExamId) {
+        return;
+      }
+
+      const subject = this.state.selectedSubject ?? this.state.config?.subject ?? defaultConfig().subject;
+      const theme = getMockExam(mockExamId)?.source_themes[0] ?? themes[0];
+      void this.startQuiz({ subject, theme, mockExamId });
+      return;
+    }
+
     if (action === 'submit-answer') {
       void this.submitAnswer();
       return;
@@ -630,6 +768,8 @@ export class QuizApp {
         errorKind: undefined,
         errorSubject: undefined,
         errorTheme: undefined,
+        errorMockTitle: undefined,
+        errorNotice: undefined,
         result: null,
         busy: false,
       });
@@ -651,6 +791,8 @@ export class QuizApp {
         errorKind: undefined,
         errorSubject: undefined,
         errorTheme: undefined,
+        errorMockTitle: undefined,
+        errorNotice: undefined,
         result: null,
         busy: false,
       });
@@ -687,7 +829,10 @@ export class QuizApp {
       errorKind: undefined,
       errorSubject: undefined,
       errorTheme: undefined,
+      errorMockTitle: undefined,
+      errorNotice: undefined,
       busy: true,
+      mockExam: null,
       result: null,
       questions: [],
       currentIndex: 0,
@@ -714,12 +859,28 @@ export class QuizApp {
 
     try {
       const userId = getAnonymousSessionUserId();
-      const pool = await loadQuestionPool(config.subject, config.theme);
-      const questions = pickQuizQuestions(pool);
+      let mockExam: MockExam | null = null;
+      let questions: Question[];
+      if (config.mockExamId) {
+        // A deleted or stale exam may only be in our cache, so check the server once before giving up.
+        mockExam = getMockExam(config.mockExamId) ?? null;
+        if (!mockExam) {
+          await syncMockExamsFromRemote().catch(() => false);
+          mockExam = getMockExam(config.mockExamId) ?? null;
+        }
+        if (!mockExam) {
+          throw new MockExamUnavailableError();
+        }
+        const pool = await loadMockQuestionPool(config.subject, mockExam);
+        questions = pickBalancedQuestions(pool, mockExam.question_count);
+      } else {
+        questions = pickQuizQuestions(await loadQuestionPool(config.subject, config.theme));
+      }
       this.state = {
         ...this.state,
         phase: 'question',
         userId,
+        mockExam,
         questions,
         currentIndex: 0,
         selectedIndex: null,
@@ -730,11 +891,17 @@ export class QuizApp {
         errorKind: undefined,
         errorSubject: undefined,
         errorTheme: undefined,
+        errorMockTitle: undefined,
+        errorNotice: undefined,
         result: null,
         busy: false,
       };
       this.render();
-      trackQuizStart(config.subject, config.theme);
+      trackQuizStart(
+        config.subject,
+        config.theme,
+        mockExam ? { id: mockExam.id, title: mockExam.title } : undefined,
+      );
     } catch (error) {
       document.body.classList.remove('quiz-fullscreen');
       if (error instanceof InsufficientQuestionsError) {
@@ -745,6 +912,15 @@ export class QuizApp {
           errorKind: 'insufficient',
           errorSubject: error.subject,
           errorTheme: error.theme,
+          errorMockTitle: error.mockExamTitle,
+        });
+      } else if (error instanceof MockExamUnavailableError) {
+        this.setState({
+          phase: 'error',
+          busy: false,
+          error: error.message,
+          errorKind: 'generic',
+          errorNotice: error.message,
         });
       } else {
         this.setState({
@@ -772,6 +948,8 @@ export class QuizApp {
       errorKind: undefined,
       errorSubject: undefined,
       errorTheme: undefined,
+      errorMockTitle: undefined,
+      errorNotice: undefined,
       result: null,
       busy: false,
     });
@@ -821,11 +999,13 @@ export class QuizApp {
       return;
     }
 
+    const mockExam = this.state.mockExam;
     const result: ResultRow = {
       id: uid(),
       user_id: this.state.userId,
       subject: this.state.config?.subject ?? subjects[0],
       theme: this.state.config?.theme ?? themes[0],
+      ...(mockExam ? { mock_exam_id: mockExam.id, mock_exam_title: mockExam.title } : {}),
       score: this.state.score,
       total: this.state.questions.length,
       percent: Math.round((this.state.score / this.state.questions.length) * 100),
@@ -844,13 +1024,16 @@ export class QuizApp {
     };
     this.render();
 
-    trackQuizComplete({
-      subject: result.subject,
-      theme: result.theme,
-      score: result.score,
-      total: result.total,
-      timeUsedSeconds: result.time_used_seconds,
-    });
+    trackQuizComplete(
+      {
+        subject: result.subject,
+        theme: result.theme,
+        score: result.score,
+        total: result.total,
+        timeUsedSeconds: result.time_used_seconds,
+      },
+      mockExam ? { id: mockExam.id, title: mockExam.title } : undefined,
+    );
   }
 }
 
