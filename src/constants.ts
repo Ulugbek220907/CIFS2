@@ -1,4 +1,4 @@
-import type { Subject, Theme } from './types';
+import type { MockExam, Subject, Theme } from './types';
 
 export const cifsSubjects: Subject[] = [
   'Quantitative Methods',
@@ -105,6 +105,65 @@ export function getSubjectThemes(subject?: Subject): SubjectThemeOption[] {
       hasCustomTitle: Boolean(customTitle),
     };
   });
+}
+
+// Mock exams, filled by initMockExams() / loadMockExams() in mockExams.ts.
+let mockExamsCache: MockExam[] = [];
+
+export function updateMockExamsCache(exams: MockExam[]): void {
+  mockExamsCache = exams.slice();
+}
+
+function compareMockExams(a: MockExam, b: MockExam): number {
+  return (
+    a.after_theme - b.after_theme ||
+    a.created_at.localeCompare(b.created_at) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+/** Mock exams for one subject in display order (by position, then creation time). */
+export function getMockExams(subject?: Subject): MockExam[] {
+  if (!subject) return [];
+  return mockExamsCache.filter((exam) => exam.subject === subject).sort(compareMockExams);
+}
+
+export function getMockExam(id?: string | null): MockExam | undefined {
+  if (!id) return undefined;
+  return mockExamsCache.find((exam) => exam.id === id);
+}
+
+export type SubjectOutlineItem =
+  | ({ kind: 'theme' } & SubjectThemeOption)
+  | { kind: 'mock'; exam: MockExam };
+
+/**
+ * The subject's quiz list: the 12 themes with its mock exams slotted in.
+ * A mock exam with after_theme N appears directly after Theme N (0 = first).
+ */
+export function getSubjectOutline(subject?: Subject): SubjectOutlineItem[] {
+  const exams = getMockExams(subject);
+  const outline: SubjectOutlineItem[] = [];
+
+  const pushExamsAfter = (position: number): void => {
+    for (const exam of exams) {
+      if (exam.after_theme === position) outline.push({ kind: 'mock', exam });
+    }
+  };
+
+  pushExamsAfter(0);
+  getSubjectThemes(subject).forEach((option, index) => {
+    outline.push({ kind: 'theme', ...option });
+    pushExamsAfter(index + 1);
+  });
+
+  // Anything with an out-of-range position still shows, at the end, rather than vanishing.
+  for (const exam of exams) {
+    if (exam.after_theme < 0 || exam.after_theme > themes.length) {
+      outline.push({ kind: 'mock', exam });
+    }
+  }
+  return outline;
 }
 
 export function getQuizThemeTitle(subject?: Subject, theme?: Theme): string {

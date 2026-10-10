@@ -5,6 +5,7 @@ import {
   getCustomThemeTitle,
   updateCustomThemeTitlesCache,
 } from './constants';
+import { assertWriteOk as assertOk, type WriteContext } from './dbErrors';
 import type { Subject, Theme } from './types';
 
 const STORAGE_KEY = 'cifs_theme_titles';
@@ -24,11 +25,6 @@ interface ThemeTitleUpsert {
   updated_at: string;
 }
 
-interface SupabaseErrorLike {
-  code?: string;
-  message?: string;
-}
-
 function getLocalMap(): ThemeTitlesMap {
   try {
     return readLocal<ThemeTitlesMap>(STORAGE_KEY) ?? {};
@@ -42,25 +38,14 @@ function applyTitlesMap(map: ThemeTitlesMap): void {
   updateCustomThemeTitlesCache(map);
 }
 
-function describeWriteError(error: SupabaseErrorLike): string {
-  const message = error.message ?? '';
-  if (error.code === 'PGRST205' || error.code === '42P01') {
-    return 'The theme_titles table does not exist yet. Run supabase/migrations/0006_theme_titles.sql in the Supabase SQL editor.';
-  }
-  if (error.code === '42501' || /row-level security/i.test(message)) {
-    return 'Supabase refused the change. Sign out and sign back in as an admin.';
-  }
-  if (/jwt/i.test(message)) {
-    return 'Your admin session has expired. Sign in again and retry.';
-  }
-  return message || 'Unknown Supabase error.';
-}
+const writeContext: WriteContext = {
+  failure: 'Theme names were not saved.',
+  table: 'theme_titles',
+  migration: '0006_theme_titles.sql',
+};
 
-async function assertWriteOk(request: PromiseLike<{ error: SupabaseErrorLike | null }>): Promise<void> {
-  const { error } = await request;
-  if (error) {
-    throw new Error(`Theme names were not saved. ${describeWriteError(error)}`);
-  }
+function assertWriteOk(request: Parameters<typeof assertOk>[0]): Promise<void> {
+  return assertOk(request, writeContext);
 }
 
 /** Returns the Supabase copy as a map, or null when Supabase is unset or the read fails. */
