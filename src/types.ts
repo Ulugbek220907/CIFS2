@@ -43,11 +43,26 @@ export interface Question {
   created_at: string;
 }
 
+export interface MockExam {
+  id: string;
+  subject: Subject;
+  title: string;
+  /** Number of themes listed before this exam: 0 puts it above Theme 1, 4 puts it right after Theme 4. */
+  after_theme: number;
+  /** Themes whose questions this exam samples from. */
+  source_themes: Theme[];
+  question_count: number;
+  created_at: string;
+}
+
 export interface ResultRow {
   id: string;
   user_id: string;
   subject: Subject;
   theme: Theme;
+  /** Set when the attempt was a mock exam; `theme` is then only a placeholder. */
+  mock_exam_id?: string | null;
+  mock_exam_title?: string | null;
   score: number;
   total: number;
   percent: number;

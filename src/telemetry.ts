@@ -55,7 +55,7 @@ interface TelemetryRow {
   session_id: string;
   event_type: 'page_visit' | 'quiz_start' | 'quiz_complete';
   subject?: Subject;
-  theme?: Theme;
+  theme?: Theme | null;
   score?: number;
   total_questions?: number;
   time_taken_seconds?: number;
@@ -111,7 +111,17 @@ export function trackPageVisit(): void {
   }
 }
 
-export function trackQuizStart(subject: Subject, theme: Theme): void {
+/** Identifies a mock exam attempt. Mock attempts carry no theme (the DB only allows Theme 1..12 or NULL). */
+export interface MockAttempt {
+  id: string;
+  title: string;
+}
+
+function mockMetadata(mock: MockAttempt): Record<string, unknown> {
+  return { mock_exam_id: mock.id, mock_exam_title: mock.title };
+}
+
+export function trackQuizStart(subject: Subject, theme: Theme, mock?: MockAttempt): void {
   try {
     const sessionId = getAnalyticsSessionId();
 
@@ -119,20 +129,24 @@ export function trackQuizStart(subject: Subject, theme: Theme): void {
       session_id: sessionId,
       event_type: 'quiz_start',
       subject,
-      theme,
+      theme: mock ? null : theme,
+      ...(mock ? { metadata: mockMetadata(mock) } : {}),
     });
   } catch (error) {
     console.warn('[Telemetry] Error in trackQuizStart:', error);
   }
 }
 
-export function trackQuizComplete(data: {
-  subject: Subject;
-  theme: Theme;
-  score: number;
-  total: number;
-  timeUsedSeconds: number;
-}): void {
+export function trackQuizComplete(
+  data: {
+    subject: Subject;
+    theme: Theme;
+    score: number;
+    total: number;
+    timeUsedSeconds: number;
+  },
+  mock?: MockAttempt,
+): void {
   try {
     const sessionId = getAnalyticsSessionId();
 
@@ -140,10 +154,11 @@ export function trackQuizComplete(data: {
       session_id: sessionId,
       event_type: 'quiz_complete',
       subject: data.subject,
-      theme: data.theme,
+      theme: mock ? null : data.theme,
       score: data.score,
       total_questions: data.total,
       time_taken_seconds: data.timeUsedSeconds,
+      ...(mock ? { metadata: mockMetadata(mock) } : {}),
     });
   } catch (error) {
     console.warn('[Telemetry] Error in trackQuizComplete:', error);
