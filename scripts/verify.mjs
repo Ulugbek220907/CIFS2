@@ -518,12 +518,13 @@ test('normalizeMockExamInput: after_theme rules', async () => {
 test('normalizeMockExamInput: source_themes rules', async () => {
   const { normalizeMockExamInput } = await import('../src/mockExam.ts');
   const base = { title: 'Mock', after_theme: 1, question_count: 10 };
-  assert.equal(normalizeMockExamInput({ ...base, source_themes: [] }, MOCK_THEMES).ok, false);
-  assert.equal(normalizeMockExamInput({ ...base, source_themes: undefined }, MOCK_THEMES).ok, false);
-  assert.equal(normalizeMockExamInput({ ...base, source_themes: 'Theme 1' }, MOCK_THEMES).ok, false);
-  assert.equal(normalizeMockExamInput({ ...base, source_themes: ['Theme 13'] }, MOCK_THEMES).ok, false);
-  assert.equal(normalizeMockExamInput({ ...base, source_themes: ['theme 1'] }, MOCK_THEMES).ok, false);
-  // Unknown entries are dropped as long as something valid remains.
+  // Themes are optional: an exam may be made only of its own questions.
+  for (const empty of [[], undefined, 'Theme 1', ['Theme 13'], ['theme 1']]) {
+    const res = normalizeMockExamInput({ ...base, source_themes: empty }, MOCK_THEMES);
+    assert.equal(res.ok, true, `no valid themes from ${JSON.stringify(empty)} is allowed`);
+    assert.deepEqual(res.value.source_themes, []);
+  }
+  // Unknown entries are dropped.
   const mixed = normalizeMockExamInput({ ...base, source_themes: ['Theme 99', 'Theme 12', 'Theme 2'] }, MOCK_THEMES);
   assert.equal(mixed.ok, true);
   assert.deepEqual(mixed.value.source_themes, ['Theme 2', 'Theme 12']);
@@ -664,4 +665,59 @@ test('Mock exam migration (0008) exists and is locked down', () => {
   assert.match(sql, /enable row level security/i);
   assert.match(sql, /is_admin\(\)/);
   assert.match(sql, /create table if not exists public\.mock_exams/i);
+});
+
+
+test('pickMockQuestions: own questions first, themes fill the rest', async () => {
+  const { pickMockQuestions } = await import('../src/mockExam.ts');
+  const own = Array.from({ length: 6 }, (_, i) => ({ id: `own-${i}`, theme: null, mock_exam_id: 'exam-1' }));
+  const themed = ['Theme 1', 'Theme 2', 'Theme 3'].flatMap((theme) =>
+    Array.from({ length: 20 }, (_, i) => ({ id: `${theme}-${i}`, theme })),
+  );
+  let seed = 7;
+  const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+
+  // Fewer own questions than slots: every own question appears, the rest come evenly from the themes.
+  const mixed = pickMockQuestions([...own, ...themed], 15, rng);
+  assert.equal(mixed.length, 15);
+  assert.equal(new Set(mixed.map((q) => q.id)).size, 15, 'no duplicates');
+  assert.equal(mixed.filter((q) => q.mock_exam_id).length, 6, 'all own questions are included');
+  const perTheme = {};
+  for (const q of mixed.filter((q) => !q.mock_exam_id)) perTheme[q.theme] = (perTheme[q.theme] ?? 0) + 1;
+  assert.deepEqual(Object.values(perTheme).sort(), [3, 3, 3], 'remaining 9 slots spread evenly over 3 themes');
+
+  // At least as many own questions as slots: the exam is made of own questions only.
+  const ownOnly = pickMockQuestions([...own, ...themed], 4, rng);
+  assert.equal(ownOnly.length, 4);
+  assert.ok(ownOnly.every((q) => q.mock_exam_id === 'exam-1'));
+
+  // No themes at all: just the own questions, even if that is fewer than asked for.
+  assert.equal(pickMockQuestions(own, 25, rng).length, 6);
+  // No own questions: behaves like the balanced theme sampler.
+  assert.equal(pickMockQuestions(themed, 25, rng).length, 25);
+  // Input is not mutated.
+  const snapshot = JSON.stringify(own);
+  pickMockQuestions(own, 3, rng);
+  assert.equal(JSON.stringify(own), snapshot);
+});
+
+test('Mock exam question migration (0009) links questions to exams safely', () => {
+  const path = 'supabase/migrations/0009_mock_exam_questions.sql';
+  assert.ok(fs.existsSync(path), `${path} exists`);
+  const sql = fs.readFileSync(path, 'utf8');
+  assert.match(sql, /add column if not exists mock_exam_id uuid references public\.mock_exams \(id\) on delete cascade/i);
+  assert.match(sql, /alter column theme drop not null/i);
+  assert.match(sql, /\(theme is null\) <> \(mock_exam_id is null\)/, 'a question has exactly one of theme / mock exam');
+});
+
+test('is_admin() is never loosened to "any signed-in user" in any migration', () => {
+  const dir = 'supabase/migrations';
+  for (const file of fs.readdirSync(dir).filter((name) => name.endsWith('.sql'))) {
+    const sql = fs.readFileSync(`${dir}/${file}`, 'utf8');
+    if (!/function public\.is_admin\(\)/.test(sql)) continue;
+    assert.doesNotMatch(sql, /auth\.uid\(\) is not null/i, `${file} must not treat every signed-in user as admin`);
+  }
+  const strict = fs.readFileSync(`${dir}/0010_restore_strict_is_admin.sql`, 'utf8');
+  assert.match(strict, /app_metadata'? ->> 'role'\) = 'admin'/);
+  assert.match(strict, /ulugbekisoqov22@gmail\.com/);
 });

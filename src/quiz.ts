@@ -16,7 +16,7 @@ import {
 } from './constants';
 import { initThemeTitles, syncThemeTitlesFromRemote } from './themeTitles';
 import { initMockExams, syncMockExamsFromRemote } from './mockExams';
-import { describeCoverage, pickBalancedQuestions } from './mockExam';
+import { describeCoverage, pickMockQuestions } from './mockExam';
 import { readLocal, readSession, writeLocal, writeSession } from './storage';
 import { trackQuizStart, trackQuizComplete } from './telemetry';
 import type { AnswerReview, MockExam, Question, ResultRow, Subject, Theme } from './types';
@@ -209,25 +209,38 @@ async function loadMockQuestionPool(subject: Subject, exam: MockExam): Promise<Q
     return cached.pool;
   }
 
-  // One request per theme: PostgREST caps a response at 1000 rows, and a single query across
-  // many themes could silently drop questions from some of them.
-  const results = await Promise.all(
-    exam.source_themes.map((theme) =>
-      supabase
-        .from('questions')
-        .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
-        .in('subject', getSubjectAliases(subject))
-        .eq('theme', theme)
-        .order('created_at', { ascending: false }),
-    ),
+  // The exam's own questions, plus one request per source theme: PostgREST caps a response at
+  // 1000 rows, and a single query across many themes could silently drop questions from some.
+  const ownRequest = supabase
+    .from('questions')
+    .select('id, subject, theme, mock_exam_id, question_text, options, correct_index, explanation, created_at')
+    .eq('mock_exam_id', exam.id)
+    .order('created_at', { ascending: false });
+
+  const themeRequests = exam.source_themes.map((theme) =>
+    supabase
+      .from('questions')
+      .select('id, subject, theme, question_text, options, correct_index, explanation, created_at')
+      .in('subject', getSubjectAliases(subject))
+      .eq('theme', theme)
+      .order('created_at', { ascending: false }),
   );
 
-  const failed = results.find((result) => result.error);
+  const [ownResult, ...themeResults] = await Promise.all([ownRequest, ...themeRequests]);
+
+  const failed = themeResults.find((result) => result.error);
   if (failed?.error) {
     throw new Error(failed.error.message);
   }
+  // Before migration 0009 the column does not exist yet: that just means there are no own questions.
+  if (ownResult.error && !/mock_exam_id/i.test(ownResult.error.message)) {
+    throw new Error(ownResult.error.message);
+  }
 
-  const pool = results.flatMap((result) => (result.data ?? []) as Question[]);
+  const pool = [
+    ...((ownResult.error ? [] : ownResult.data ?? []) as Question[]),
+    ...themeResults.flatMap((result) => (result.data ?? []) as Question[]),
+  ];
   if (pool.length < exam.question_count) {
     throw new InsufficientQuestionsError(
       subject,
@@ -380,7 +393,7 @@ export class QuizApp {
                       <span class="theme-btn-tag mock-exam-tag">Mock Exam</span>
                       <span class="mock-exam-text">
                         <span class="theme-btn-title">${escapeHtml(exam.title)}</span>
-                        <span class="mock-exam-meta">${escapeHtml(describeCoverage(exam.source_themes))} · ${exam.question_count} questions</span>
+                        <span class="mock-exam-meta">${escapeHtml([describeCoverage(exam.source_themes), `${exam.question_count} questions`].filter(Boolean).join(' · '))}</span>
                       </span>
                     </div>
                     <span class="theme-btn-arrow" aria-hidden="true">→</span>
@@ -502,12 +515,21 @@ export class QuizApp {
 
   private renderQuiz(): string {
     const question = this.state.questions[this.state.currentIndex];
-    const quizTitle = this.state.mockExam
-      ? mockLabel(this.state.mockExam.title)
-      : getQuizThemeTitle(this.state.config?.subject, this.state.config?.theme);
+    const subject = this.state.config?.subject;
+    const theme = this.state.config?.theme;
+    const themeTitle = getQuizThemeTitle(subject, theme);
+    // Small label above the title says where the quiz comes from; the title stays modest so the question leads.
+    const quizTitle = this.state.mockExam ? this.state.mockExam.title : themeTitle;
+    const kicker = [
+      subject,
+      this.state.mockExam ? 'Mock exam' : theme && themeTitle !== theme ? theme : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
     return `
       <section class="panel quiz-shell">
         <div class="quiz-topbar-centered">
+          <div class="quiz-kicker">${escapeHtml(kicker)}</div>
           <h2 class="quiz-title-centered">${escapeHtml(quizTitle)}</h2>
           <div class="quiz-progress-centered">
             <div class="progress-copy">Question ${this.state.currentIndex + 1} of ${this.state.questions.length}</div>
@@ -874,7 +896,7 @@ export class QuizApp {
           throw new MockExamUnavailableError();
         }
         const pool = await loadMockQuestionPool(config.subject, mockExam);
-        questions = pickBalancedQuestions(pool, mockExam.question_count);
+        questions = pickMockQuestions(pool, mockExam.question_count);
       } else {
         questions = pickQuizQuestions(await loadQuestionPool(config.subject, config.theme));
       }
