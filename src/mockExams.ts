@@ -33,8 +33,8 @@ function toMockExam(raw: unknown): MockExam | null {
   if (!Number.isInteger(questionCount) || questionCount < 1) return null;
 
   const picked = new Set(Array.isArray(row.source_themes) ? row.source_themes.map(String) : []);
+  // Themes are optional: an exam may consist only of its own questions.
   const sourceThemes = themes.filter((theme) => picked.has(theme));
-  if (sourceThemes.length === 0) return null;
 
   return {
     id,

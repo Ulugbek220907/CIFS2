@@ -13,7 +13,7 @@ create table if not exists public.theme_titles (
 -- Enable RLS
 alter table public.theme_titles enable row level security;
 
--- Ensure is_admin helper exists
+-- Ensure is_admin helper exists (same strict definition as 0005 / 0010)
 create or replace function public.is_admin()
 returns boolean
 language sql
@@ -24,8 +24,7 @@ as $$
   select coalesce(
     (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
     or (auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true
-    or lower(coalesce(auth.jwt() ->> 'email', '')) in ('ulugbekisoqov22@gmail.com')
-    or (auth.uid() is not null and not coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false)),
+    or lower(coalesce(auth.jwt() ->> 'email', '')) in ('ulugbekisoqov22@gmail.com'),
     false
   );
 $$;

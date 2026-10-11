@@ -38,10 +38,8 @@ export function normalizeMockExamInput(
   }
 
   const picked = new Set(Array.isArray(raw.source_themes) ? raw.source_themes.map(String) : []);
+  // Themes are optional: an exam can consist only of its own questions.
   const sourceThemes = validThemes.filter((theme) => picked.has(theme));
-  if (sourceThemes.length === 0) {
-    return { ok: false, error: 'Pick at least one theme for the mock exam to draw questions from.' };
-  }
 
   const questionCount = Number(raw.question_count);
   if (
@@ -71,7 +69,7 @@ export function normalizeMockExamInput(
  * (round-robin over shuffled per-theme pools), then shuffles the final order.
  * Returns fewer than `count` only when the combined pool is smaller than `count`.
  */
-export function pickBalancedQuestions<T extends { theme: string }>(
+export function pickBalancedQuestions<T extends { theme: string | null }>(
   questions: readonly T[],
   count: number,
   random: () => number = Math.random,
@@ -87,9 +85,10 @@ export function pickBalancedQuestions<T extends { theme: string }>(
 
   const byTheme = new Map<string, T[]>();
   for (const question of questions) {
-    const bucket = byTheme.get(question.theme);
+    const key = question.theme ?? '';
+    const bucket = byTheme.get(key);
     if (bucket) bucket.push(question);
-    else byTheme.set(question.theme, [question]);
+    else byTheme.set(key, [question]);
   }
 
   // Randomise which themes get the "extra" question when count isn't divisible by theme count.
@@ -109,6 +108,36 @@ export function pickBalancedQuestions<T extends { theme: string }>(
     round += 1;
   }
   return shuffled(picked);
+}
+
+/**
+ * Builds a mock exam: the exam's own questions always come first, and any remaining slots
+ * are filled from the source-theme questions, spread evenly across themes. When the exam has
+ * at least `count` own questions it is made of those alone. Own questions are the ones with a
+ * mock_exam_id; everything else is treated as theme questions.
+ */
+export function pickMockQuestions<T extends { theme: string | null; mock_exam_id?: string | null }>(
+  pool: readonly T[],
+  count: number,
+  random: () => number = Math.random,
+): T[] {
+  const own = pool.filter((question) => Boolean(question.mock_exam_id));
+  const fromThemes = pool.filter((question) => !question.mock_exam_id);
+
+  const shuffled = <U>(items: readonly U[]): U[] => {
+    const out = items.slice();
+    for (let i = out.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
+
+  if (own.length >= count) {
+    return shuffled(own).slice(0, count);
+  }
+  const filler = pickBalancedQuestions(fromThemes, count - own.length, random);
+  return shuffled([...own, ...filler]);
 }
 
 function themeNumber(theme: string): number | null {

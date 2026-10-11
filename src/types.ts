@@ -35,7 +35,10 @@ export type Theme =
 export interface Question {
   id: string;
   subject: Subject;
-  theme: Theme;
+  /** Null for questions that belong to a mock exam (see mock_exam_id). */
+  theme: Theme | null;
+  /** Set for a mock exam's own questions; exactly one of theme / mock_exam_id is set. */
+  mock_exam_id?: string | null;
   question_text: string;
   options: string[];
   correct_index: number;
@@ -49,7 +52,7 @@ export interface MockExam {
   title: string;
   /** Number of themes listed before this exam: 0 puts it above Theme 1, 4 puts it right after Theme 4. */
   after_theme: number;
-  /** Themes whose questions this exam samples from. */
+  /** Themes this exam fills its remaining slots from. May be empty (own questions only). */
   source_themes: Theme[];
   question_count: number;
   created_at: string;

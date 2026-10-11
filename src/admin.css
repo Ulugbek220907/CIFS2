@@ -112,29 +112,95 @@
 .admin-session {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  justify-content: flex-end;
+  gap: 0.5rem 1rem;
   flex-wrap: wrap;
 }
 
+.admin-tools,
+.admin-account {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* The account group sits apart from the content tools with a thin divider on wide screens. */
+.admin-account {
+  padding-left: 1rem;
+  border-left: 1px solid var(--border);
+}
+
+/* Every header control shares one height, radius and type size so the bar reads as a single row. */
+.admin-action,
 .admin-user-pill {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  height: 2.25rem;
+  padding: 0 0.85rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.admin-action {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dark);
+  cursor: pointer;
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.admin-action svg {
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.admin-action:hover {
+  background: var(--panel-muted);
+  border-color: #cbd5e1;
+}
+
+.admin-action:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.admin-action-quiet {
+  color: var(--text-muted);
+}
+
+.admin-action-quiet:hover {
+  color: var(--text-dark);
+}
+
+.admin-user-pill {
   background: var(--panel-muted);
   border: 1px solid var(--border);
-  padding: 0.4rem 0.85rem;
   border-radius: 999px;
-  font-size: 0.825rem;
-  font-weight: 600;
   color: var(--text-dark);
+  font-weight: 500;
 }
 
 .admin-user-pill::before {
   content: '';
   width: 7px;
   height: 7px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: #22c55e;
+}
+
+.admin-user-email {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ==========================================================================
@@ -1577,18 +1643,6 @@
   border-color: #cbd5e1;
 }
 
-.theme-mgr-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.45rem 0.85rem;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
 /* ==========================================================================
    Student Telemetry Command Center & Funnel
    ========================================================================== */
@@ -2634,28 +2688,77 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Header buttons wrap onto their own line instead of squeezing the session pill. */
+  /* Header: tools and account each take a full row, controls share the width evenly. */
   .admin-session {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .admin-tools,
+  .admin-account {
     width: 100%;
   }
 
-  .admin-session .theme-mgr-btn {
-    flex: 1 1 auto;
+  .admin-account {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .admin-tools .admin-action {
+    flex: 1 1 0;
     justify-content: center;
   }
 
+  .admin-account {
+    flex-wrap: nowrap;
+  }
+
+  /* The email shrinks (with an ellipsis) so Sign out stays on the same row. */
   .admin-user-pill {
+    flex: 1 1 0;
     min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* Its text must not widen the page: size comes from the flex row, the email ellipsizes inside. */
+    contain: inline-size;
   }
 }
 
-/* Keep toasts clear of the modal footer (Save / Close) while a modal is open. */
+/* While a modal is open, toasts go top-centre: clear of the footer (Save / Close) and the close (×) button. */
 body:has(.theme-modal-backdrop) .admin-toast-container {
-  top: 1.25rem;
+  top: 1rem;
   bottom: auto;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(440px, calc(100vw - 2rem));
   flex-direction: column;
+}
+
+@media (max-width: 640px) {
+  body:has(.theme-modal-backdrop) .admin-toast-container {
+    left: 1rem;
+    right: 4rem;
+    transform: none;
+    width: auto;
+  }
+}
+
+/* Mock exam modal: own-question affordances */
+.action-btn-sm.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.action-btn-sm.primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.mock-optional {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.mock-fieldset-note {
+  margin: 0.15rem 0 0.5rem;
 }
