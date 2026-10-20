@@ -29,6 +29,11 @@ import '../admin.css';
 
 type AdminPhase = 'loading' | 'login' | 'dashboard';
 
+/** Supabase caps each response at 1000 rows; events are read in pages of that size. */
+const ANALYTICS_PAGE_SIZE = 1000;
+/** Safety cap on how many pages one refresh reads (100,000 events). */
+const ANALYTICS_MAX_PAGES = 100;
+
 export type AnalyticsTimeRange = 'all' | '7d' | 'today';
 
 export interface AnalyticsEvent {
@@ -103,6 +108,8 @@ interface AdminState {
   analyticsEvents: AnalyticsEvent[];
   analyticsLoading: boolean;
   analyticsError: string | null;
+  /** True when the event history was longer than the safety cap, so older events are not counted. */
+  analyticsTruncated: boolean;
   analyticsTimeRange: AnalyticsTimeRange;
   showSubjectBreakdown: boolean;
 }
@@ -885,6 +892,7 @@ export function bootAdmin(root: HTMLElement): void {
     analyticsEvents: [],
     analyticsLoading: false,
     analyticsError: null,
+    analyticsTruncated: false,
     analyticsTimeRange: 'all',
     showSubjectBreakdown: false,
   };
@@ -1080,6 +1088,15 @@ export function bootAdmin(root: HTMLElement): void {
               </div>
             </div>
           ` : `
+            ${state.analyticsTruncated ? `
+              <div class="telemetry-notice-box">
+                <div class="telemetry-notice-content">
+                  <strong>Showing the most recent ${(ANALYTICS_PAGE_SIZE * ANALYTICS_MAX_PAGES).toLocaleString('en-US')} events</strong>
+                  <p>There is more history than the dashboard loads at once, so older visits are not counted. Pick "Last 7 Days" or "Today" for exact numbers.</p>
+                </div>
+              </div>
+            ` : ''}
+
             <!-- 4 Executive KPI Cards -->
             <div class="telemetry-kpi-grid">
               <!-- KPI 1: Entered Webpage -->
@@ -1599,27 +1616,55 @@ export function bootAdmin(root: HTMLElement): void {
     state.analyticsLoading = true;
     state.analyticsError = null;
     try {
-      let query = supabase
-        .from('site_analytics')
-        .select('id, event_type, session_id, subject, theme, score, total_questions, time_taken_seconds, metadata, created_at')
-        .order('created_at', { ascending: false });
-
       const now = new Date();
+      let since: string | null = null;
       if (state.analyticsTimeRange === 'today') {
         const todayStart = new Date(now);
         todayStart.setHours(0, 0, 0, 0);
-        query = query.gte('created_at', todayStart.toISOString());
+        since = todayStart.toISOString();
       } else if (state.analyticsTimeRange === '7d') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        query = query.gte('created_at', sevenDaysAgo.toISOString());
+        since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
       }
 
-      const { data, error } = await query;
-      if (error) {
-        state.analyticsError = error.message;
+      // Supabase returns at most 1000 rows per request. A single unpaged query silently dropped the OLDEST
+      // events once the table grew past that, so page visits vanished and "visitors" kept shrinking.
+      // Read every page instead (newest first; id breaks ties so pages never overlap or skip rows).
+      const events: AnalyticsEvent[] = [];
+      let failure: string | null = null;
+      let truncated = false;
+      for (let page = 0; ; page += 1) {
+        if (page >= ANALYTICS_MAX_PAGES) {
+          truncated = true;
+          break;
+        }
+        let query = supabase
+          .from('site_analytics')
+          .select('id, event_type, session_id, subject, theme, score, total_questions, time_taken_seconds, metadata, created_at')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(page * ANALYTICS_PAGE_SIZE, (page + 1) * ANALYTICS_PAGE_SIZE - 1);
+        if (since) {
+          query = query.gte('created_at', since);
+        }
+        const { data, error } = await query;
+        if (error) {
+          failure = error.message;
+          break;
+        }
+        const rows = (data ?? []) as AnalyticsEvent[];
+        events.push(...rows);
+        if (rows.length < ANALYTICS_PAGE_SIZE) {
+          break;
+        }
+      }
+
+      if (failure) {
+        state.analyticsError = failure;
         state.analyticsEvents = [];
+        state.analyticsTruncated = false;
       } else {
-        state.analyticsEvents = (data ?? []) as AnalyticsEvent[];
+        state.analyticsEvents = events;
+        state.analyticsTruncated = truncated;
         state.analyticsError = null;
       }
     } catch (err) {
