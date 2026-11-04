@@ -18,7 +18,7 @@ export const level4Subjects: Subject[] = [
   'Essentials of Economics',
 ];
 
-export const level5Subjects: Subject[] = ['Econometrics'];
+export const level5Subjects: Subject[] = ['Econometrics', 'Management Accounting'];
 
 export const subjects: Subject[] = [...cifsSubjects, ...level4Subjects, ...level5Subjects];
 
@@ -83,6 +83,8 @@ export function subjectShortName(subject: Subject): string {
       return 'EoE';
     case 'Econometrics':
       return 'EM';
+    case 'Management Accounting':
+      return 'MA';
   }
 }
 
