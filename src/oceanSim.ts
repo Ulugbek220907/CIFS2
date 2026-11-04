@@ -13,10 +13,14 @@ export interface OceanGrid {
   v: Float32Array;
 }
 
-/** Glyphs from light to heavy, so crests read as denser ink than troughs. */
-export const OCEAN_GLYPHS: readonly string[] = [
-  '·', '˙', '-', '+', '=', '×', '÷', '≈', '±', '%', '√', 'π', '$', '∫', '∑',
-];
+/**
+ * Every printable ASCII character (0-9, a-z, A-Z and all punctuation such as !@#$%^&*()_+), ordered from the
+ * least to the most ink it puts down in the site font (Plus Jakarta Sans 600), measured by rendering each one.
+ * Crests of a wave therefore read as dark characters (@ W M Q) and troughs as faint ones (. ` ' ,).
+ */
+export const OCEAN_RAMP = ".`',:;-\"_~^!*irlI=+><J()1\\/tj?fv|}{LTs][x7czYunyoFaekh23V4965ZXCPSUpqEbdA0KwH8mRDGgO&$NB#%QMW@";
+
+export const OCEAN_GLYPHS: readonly string[] = Array.from(OCEAN_RAMP);
 
 const MAX_HEIGHT = 3;
 
@@ -76,6 +80,67 @@ export function swell(x: number, y: number, t: number): number {
     0.55 * Math.sin(x * 0.018 + y * 0.007 - t * 0.9) +
     0.3 * Math.sin(x * 0.011 - y * 0.013 - t * 0.6 + 1.7) +
     0.15 * Math.sin(y * 0.03 + t * 1.3)
+  );
+}
+
+/**
+ * The same ambient swell as swell(), split so no trigonometry runs per cell per frame: the position-dependent
+ * sines/cosines are computed once for the whole grid, and each frame only needs a handful of time-dependent ones
+ * (sin(A - wt) = sinA*cos(wt) - cosA*sin(wt)). Cells are centred at (col*cell + cell/2, row*cell + cell/2).
+ */
+export interface SwellField {
+  s1: Float32Array;
+  c1: Float32Array;
+  s2: Float32Array;
+  c2: Float32Array;
+  /** Third wave only depends on the row. */
+  s3: Float32Array;
+  c3: Float32Array;
+}
+
+export function createSwellField(cols: number, rows: number, cell: number): SwellField {
+  const size = cols * rows;
+  const field: SwellField = {
+    s1: new Float32Array(size), c1: new Float32Array(size), s2: new Float32Array(size), c2: new Float32Array(size),
+    s3: new Float32Array(rows), c3: new Float32Array(rows),
+  };
+  for (let row = 0; row < rows; row += 1) {
+    const y = row * cell + cell / 2;
+    field.s3[row] = Math.sin(y * 0.03);
+    field.c3[row] = Math.cos(y * 0.03);
+    for (let col = 0; col < cols; col += 1) {
+      const x = col * cell + cell / 2;
+      const i = row * cols + col;
+      const a1 = x * 0.018 + y * 0.007;
+      const a2 = x * 0.011 - y * 0.013 + 1.7;
+      field.s1[i] = Math.sin(a1);
+      field.c1[i] = Math.cos(a1);
+      field.s2[i] = Math.sin(a2);
+      field.c2[i] = Math.cos(a2);
+    }
+  }
+  return field;
+}
+
+export interface SwellClock {
+  cos1: number; sin1: number; cos2: number; sin2: number; cos3: number; sin3: number;
+}
+
+/** The few time-dependent sines and cosines for one frame (seconds). */
+export function swellClock(t: number): SwellClock {
+  return {
+    cos1: Math.cos(t * 0.9), sin1: Math.sin(t * 0.9),
+    cos2: Math.cos(t * 0.6), sin2: Math.sin(t * 0.6),
+    cos3: Math.cos(t * 1.3), sin3: Math.sin(t * 1.3),
+  };
+}
+
+/** Ambient swell at a cell: equals swell(x, y, t) for that cell's centre. */
+export function swellAtCell(field: SwellField, clock: SwellClock, row: number, index: number): number {
+  return (
+    0.55 * (field.s1[index] * clock.cos1 - field.c1[index] * clock.sin1) +
+    0.3 * (field.s2[index] * clock.cos2 - field.c2[index] * clock.sin2) +
+    0.15 * (field.s3[row] * clock.cos3 + field.c3[row] * clock.sin3)
   );
 }
 

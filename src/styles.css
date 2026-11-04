@@ -254,24 +254,13 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.5rem;
-  padding: 3rem 2rem;
+  gap: 2rem;
+  padding: 3.25rem 2rem;
   text-align: center;
   background: rgba(255, 255, 255, 0.92);
   border: 1.5px solid var(--border);
   border-radius: 2rem;
   box-shadow: var(--shadow-card);
-}
-
-.home-eyebrow {
-  padding: 0.3rem 0.9rem;
-  border-radius: 999px;
-  background: var(--panel-muted);
-  color: #3730a3;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .home-hero h1 {
@@ -281,14 +270,6 @@ button {
   letter-spacing: -0.03em;
   color: var(--text-dark);
   line-height: 1.15;
-}
-
-.home-sub {
-  margin: 0;
-  max-width: 34rem;
-  color: var(--text-muted);
-  font-size: 1.05rem;
-  line-height: 1.55;
 }
 
 /* Home page only: the sea of characters sits behind everything and never takes clicks. */
@@ -1261,42 +1242,38 @@ body.quiz-fullscreen .centered-shell {
   margin-top: auto;
   border-top: 1px solid var(--border);
   background: var(--bg-card);
-  padding: 1.1rem 2rem;
+  padding: 1.25rem 2rem;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 0.2rem;
+  justify-content: flex-end;
+  align-items: center;
   font-size: 0.85rem;
   color: var(--text-muted);
 }
 
-.footer-linkedin {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-height: 2.5rem;
-  padding: 0.3rem 0.85rem;
-  margin-right: -0.85rem; /* so the text lines up with the credit above it, not the pill's padding */
-  border-radius: 999px;
-  color: #0a66c2; /* LinkedIn blue, 5.9:1 on white */
-  font-weight: 700;
-  transition: background 0.15s ease;
-}
-
-.footer-linkedin:hover {
-  background: rgba(10, 102, 194, 0.09);
-  text-decoration: underline;
-}
-
-.footer-linkedin:focus-visible {
-  outline: 3px solid rgba(10, 102, 194, 0.4);
-  outline-offset: 2px;
-}
-
-.footer-credit span {
+/* The developer's name is the link to their LinkedIn page. */
+.footer-name {
+  display: inline-block;
+  /* A bigger tap area without moving the text: padding out, negative margin back in. */
+  padding: 0.7rem 0.4rem;
+  margin: -0.7rem -0.4rem;
   font-weight: 700;
   color: var(--text-dark);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.footer-name:hover {
+  color: #0a66c2; /* LinkedIn blue */
+  text-decoration-color: #0a66c2;
+}
+
+.footer-name:focus-visible {
+  outline: 3px solid rgba(10, 102, 194, 0.4);
+  outline-offset: 2px;
+  border-radius: 0.4rem;
 }
 
 .panel h1,
@@ -1395,12 +1372,8 @@ body.quiz-fullscreen .centered-shell {
   }
 
   .site-footer {
-    align-items: center;
+    justify-content: center;
     text-align: center;
-  }
-
-  .footer-linkedin {
-    margin-right: 0;
   }
 
   body.quiz-fullscreen .main-container {

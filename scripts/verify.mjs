@@ -852,5 +852,33 @@ test('ocean swell and glyph mapping stay in range', async () => {
     assert.ok(index >= previous, 'denser glyphs for higher levels');
     previous = index;
   }
-  assert.ok(OCEAN_GLYPHS.length >= 10 && new Set(OCEAN_GLYPHS).size === OCEAN_GLYPHS.length, 'a varied, duplicate-free glyph ramp');
+  assert.equal(new Set(OCEAN_GLYPHS).size, OCEAN_GLYPHS.length, 'no duplicate glyphs');
+  const have = new Set(OCEAN_GLYPHS);
+  for (const group of ['0123456789', 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '!@#$%^&*()_+-=[]{};:\'",.<>/?\\|`~']) {
+    for (const ch of group) assert.ok(have.has(ch), `the ocean uses "${ch}"`);
+  }
+  assert.equal(OCEAN_GLYPHS.length, 94, 'all 94 printable ASCII characters (no space)');
+  // The ends of the ramp are visually light vs heavy.
+  assert.ok(['.', '`', "'", ','].includes(OCEAN_GLYPHS[0]) || OCEAN_GLYPHS.indexOf('.') < 3, 'faintest characters first');
+  assert.ok(OCEAN_GLYPHS.slice(-6).includes('@') && OCEAN_GLYPHS.slice(-6).includes('W'), 'heaviest characters last');
+});
+
+test('ocean swell: the precomputed per-cell version equals the plain formula', async () => {
+  const { swell, createSwellField, swellClock, swellAtCell } = await import('../src/oceanSim.ts');
+  const cols = 40;
+  const rows = 25;
+  const cell = 17;
+  const field = createSwellField(cols, rows, cell);
+  let worst = 0;
+  for (const t of [0, 0.37, 4.2, 99.9, 1234.567]) {
+    const clock = swellClock(t);
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = col * cell + cell / 2;
+        const y = row * cell + cell / 2;
+        worst = Math.max(worst, Math.abs(swellAtCell(field, clock, row, row * cols + col) - swell(x, y, t)));
+      }
+    }
+  }
+  assert.ok(worst < 1e-4, `largest difference ${worst}`);
 });
