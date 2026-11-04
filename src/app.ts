@@ -20,6 +20,7 @@ function navigate(pathname: string): void {
 
 function renderHeader(): string {
   return `
+    <div class="ornament-strip" aria-hidden="true"></div>
     <header class="site-header">
       <a class="brand" href="/" data-nav>
         <img src="/logo.png" alt="CIFS" class="logo-img" decoding="async" />
@@ -73,6 +74,7 @@ function renderFooter(): string {
         >Ulug'bek Isoqov</a>
       </div>
     </footer>
+    <div class="ornament-strip ornament-strip-end" aria-hidden="true"></div>
   `;
 }
 

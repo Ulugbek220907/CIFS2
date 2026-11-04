@@ -235,6 +235,7 @@ test('CSS fullscreen and layout rules', () => {
   const css = fs.readFileSync('src/styles.css', 'utf8');
   assert.match(css, /body\.quiz-fullscreen \.site-header\s*\{\s*display:\s*none !important;/);
   assert.match(css, /body\.quiz-fullscreen \.site-footer\s*\{\s*display:\s*none !important;/);
+  assert.match(css, /body\.quiz-fullscreen \.ornament-strip\s*\{\s*display:\s*none !important;/);
   assert.match(css, /body\.quiz-fullscreen \.leadership-banner/);
   assert.match(css, /\.quiz-topbar-centered/);
   assert.match(css, /\.quiz-title-centered/);
@@ -893,4 +894,16 @@ test('Migration 0012 adds Management Accounting to every subject check', () => {
   }
   assert.equal((sql.match(/^\s+'Management Accounting'$/gm) ?? []).length, 4, 'added to all four lists');
   assert.equal((sql.match(/^\s+'Econometrics',?$/gm) ?? []).length, 4, 'Econometrics kept in all four lists');
+});
+
+test('Ornament strips frame the page top and bottom and use the bundled SVG tile', () => {
+  const app = fs.readFileSync('src/app.ts', 'utf8');
+  assert.equal((app.match(/class="ornament-strip/g) ?? []).length, 2, 'one strip above the header, one below the footer');
+  assert.ok(app.indexOf('ornament-strip"') < app.indexOf('site-header'), 'top strip comes before the header');
+  assert.ok(app.indexOf('ornament-strip ornament-strip-end') > app.indexOf('</footer>'), 'bottom strip comes after the footer');
+  const css = fs.readFileSync('src/styles.css', 'utf8');
+  assert.match(css, /\.ornament-strip::before[\s\S]*?mask:\s*url\('\.\/assets\/ornament-band\.svg'\)/);
+  const svg = fs.readFileSync('src/assets/ornament-band.svg', 'utf8');
+  assert.match(svg, /<svg[^>]*viewBox="0 0 64 20"/);
+  assert.ok(!/<script|href=|http:\/\/(?!www\.w3\.org)/i.test(svg), 'tile is plain shapes only');
 });

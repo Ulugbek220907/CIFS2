@@ -76,6 +76,29 @@ button {
   flex-direction: column;
 }
 
+/* Traditional scroll-ornament borders: one at the very top of the page, one at the very bottom. */
+.ornament-strip {
+  flex: none;
+  position: relative;
+  height: 30px;
+  pointer-events: none;
+  background: var(--bg-card); /* solid, so the background characters never show through the gaps */
+}
+
+.ornament-strip::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--primary) 0%, #38bdf8 50%, var(--primary) 100%);
+  opacity: 0.7;
+  -webkit-mask: url('./assets/ornament-band.svg') repeat-x center / auto 100%;
+  mask: url('./assets/ornament-band.svg') repeat-x center / auto 100%;
+}
+
+.ornament-strip-end {
+  transform: scaleY(-1); /* the same border, mirrored, so it closes the page like a frame */
+}
+
 .site-header {
   position: sticky;
   top: 0;
@@ -726,6 +749,10 @@ body.quiz-fullscreen .site-header {
 }
 
 body.quiz-fullscreen .site-footer {
+  display: none !important;
+}
+
+body.quiz-fullscreen .ornament-strip {
   display: none !important;
 }
 
