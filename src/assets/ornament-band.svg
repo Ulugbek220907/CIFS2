@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="20" viewBox="0 0 64 20">
+  <!-- One seamless tile of a running "ram's horn" scroll border (koshkar-muiz style). Used as a CSS mask, so only the alpha matters. -->
+  <g fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- rails -->
+    <path d="M0 1.2H64M0 18.8H64" stroke-width="1"/>
+    <!-- scroll A: rises from the lower rail and curls into a spiral -->
+    <path d="M0 14C6 14 9 12 11 9C13 5.5 11 3.6 8.6 4.2C6.6 4.7 6.6 7.6 8.8 7.7"/>
+    <path d="M32 14C26 14 23 12 21 9C19 5.5 21 3.6 23.4 4.2C25.4 4.7 25.4 7.6 23.2 7.7"/>
+    <!-- scroll B: mirrored, hanging from the upper rail -->
+    <path d="M32 6C38 6 41 8 43 11C45 14.5 43 16.4 40.6 15.8C38.6 15.3 38.6 12.4 40.8 12.3"/>
+    <path d="M64 6C58 6 55 8 53 11C51 14.5 53 16.4 55.4 15.8C57.4 15.3 57.4 12.4 55.2 12.3"/>
+  </g>
+  <!-- leaf tips and seed dots -->
+  <g fill="#000">
+    <path d="M14.5 9.8C16.8 9 18 10.3 18.5 12.4C16.4 12.7 14.9 11.8 14.5 9.8Z"/>
+    <path d="M49.5 10.2C47.2 11 46 9.7 45.5 7.6C47.6 7.3 49.1 8.2 49.5 10.2Z"/>
+    <circle cx="32" cy="10" r="1.7"/>
+    <circle cx="0" cy="10" r="1.7"/>
+    <circle cx="64" cy="10" r="1.7"/>
+  </g>
+</svg>
