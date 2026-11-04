@@ -1,9 +1,11 @@
 import 'katex/dist/katex.min.css';
 import './styles.css';
 import { bootApp } from './app';
+import { initSmoothScroll } from './smoothScroll';
 import { escapeHtml } from './dom';
 
 try {
+  initSmoothScroll();
   bootApp(document.getElementById('app'));
 } catch (error) {
   console.error('App initialization error:', error);

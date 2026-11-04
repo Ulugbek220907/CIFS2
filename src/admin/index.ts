@@ -3,6 +3,7 @@ import { clearNode, escapeHtml } from '../dom';
 import { renderMathText } from '../math';
 import {
   getCustomThemeTitle,
+  getThemeNotesUrl,
   getMockExam,
   getMockExams,
   getQuizThemeTitle,
@@ -14,6 +15,8 @@ import {
   themes,
 } from '../constants';
 import { initThemeTitles, loadThemeTitlesForAdmin, setAllCustomThemeTitles } from '../themeTitles';
+import { initThemeNotes, loadThemeNotes, setAllThemeNotes } from '../themeNotes';
+import { normalizeNotesUrl } from '../notesLink';
 import { deleteMockExam, initMockExams, loadMockExams, saveMockExam } from '../mockExams';
 import {
   describeCoverage,
@@ -1534,7 +1537,7 @@ export function bootAdmin(root: HTMLElement): void {
             <div class="theme-modal-header">
               <div>
                 <h2 id="theme-modal-title">Manage Theme Names</h2>
-                <p>Assign custom names to themes for the selected subject. Leave blank to show the standard name.</p>
+                <p>Assign custom names and a Notion "Notes From Lecture" link to themes for the selected subject. Leave a field blank to use the standard name or hide the link.</p>
               </div>
               <button class="theme-modal-close" type="button" data-action="close-theme-manager" aria-label="Close modal">&times;</button>
             </div>
@@ -1550,6 +1553,8 @@ export function bootAdmin(root: HTMLElement): void {
                 <div class="theme-grid-inputs">
                   ${themes.map((t) => {
                     const currentTitle = getCustomThemeTitle(state.themeManagerSubject, t);
+                    const currentNotes = getThemeNotesUrl(state.themeManagerSubject, t);
+                    const idKey = t.replace(/\s+/g, '-');
                     return `
                       <div class="theme-input-item">
                         <label for="theme-input-${t.replace(/\s+/g, '-')}">
@@ -1562,6 +1567,18 @@ export function bootAdmin(root: HTMLElement): void {
                           name="${t}"
                           value="${escapeHtml(currentTitle)}"
                           placeholder="e.g. Intro to Accounting (or leave blank)"
+                        />
+                        <label class="theme-notes-label" for="theme-notes-${idKey}">Notes From Lecture link</label>
+                        <input
+                          id="theme-notes-${idKey}"
+                          type="text"
+                          inputmode="url"
+                          autocomplete="off"
+                          autocapitalize="off"
+                          spellcheck="false"
+                          name="notes:${t}"
+                          value="${escapeHtml(currentNotes)}"
+                          placeholder="https://notion.so/... (optional)"
                         />
                       </div>
                     `;
@@ -1680,6 +1697,7 @@ export function bootAdmin(root: HTMLElement): void {
     // Both the stored-session boot and the login form land here, so names load on either path.
     initThemeTitles();
     initMockExams();
+    initThemeNotes();
     render();
     try {
       const [, , themeUploadError] = await Promise.all([
@@ -1687,6 +1705,7 @@ export function bootAdmin(root: HTMLElement): void {
         loadAnalytics(),
         loadThemeTitlesForAdmin(),
         loadMockExams(),
+        loadThemeNotes(),
       ]);
       state.busy = false;
       state.error = null;
@@ -1921,20 +1940,41 @@ export function bootAdmin(root: HTMLElement): void {
         titlesMap[t] = String(data.get(t) ?? '').trim();
       }
 
+      // Check every link before writing anything, so one typo cannot leave the names half saved.
+      const notesMap: Record<string, string> = {};
+      for (const t of themes) {
+        const checked = normalizeNotesUrl(data.get(`notes:${t}`));
+        if (!checked.ok) {
+          showToast(`${t}: ${checked.error}`, 'error');
+          form.querySelector<HTMLInputElement>(`input[name="notes:${t}"]`)?.focus();
+          return;
+        }
+        notesMap[t] = checked.value;
+      }
+
       const saveBtn = form.querySelector<HTMLButtonElement>('#btn-save-themes');
       if (saveBtn) {
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving...';
       }
 
-      void setAllCustomThemeTitles(state.themeManagerSubject, titlesMap).then(
+      const subject = state.themeManagerSubject;
+      void (async () => {
+        await setAllCustomThemeTitles(subject, titlesMap);
+        try {
+          await setAllThemeNotes(subject, notesMap);
+        } catch (err) {
+          // The names are already saved: say so, so the admin only retries the links.
+          throw new Error(`Theme names were saved. ${err instanceof Error ? err.message : 'Lecture notes links were not saved.'}`);
+        }
+      })().then(
         () => {
           state.themeManagerOpen = false;
-          showToast(`Theme names saved for ${state.themeManagerSubject}!`, 'success');
+          showToast(`Theme names and links saved for ${subject}!`, 'success');
           render();
         },
         (err: unknown) => {
-          // Keep the modal open with the typed names so nothing is lost.
+          // Keep the modal open with the typed values so nothing is lost.
           if (saveBtn) {
             saveBtn.disabled = false;
             saveBtn.textContent = 'Save Theme Names';

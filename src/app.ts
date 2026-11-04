@@ -1,6 +1,7 @@
 import { clearNode, escapeHtml } from './dom';
 import { QuizApp } from './quiz';
 import { trackPageVisit } from './telemetry';
+import { scrollToTop } from './smoothScroll';
 
 let activeQuiz: QuizApp | null = null;
 let mountedRoot: HTMLElement | null = null;
@@ -87,9 +88,13 @@ async function renderRoute(): Promise<void> {
     return;
   }
 
+  const firstRender = currentRoute === '';
   currentRoute = pathname;
   activeQuiz?.destroy();
   activeQuiz = null;
+  if (!firstRender) {
+    scrollToTop();
+  }
 
   if (pathname === '/admin') {
     clearNode(mountedRoot);

@@ -8,6 +8,8 @@ import {
   getSubjectAliases,
   getSubjectOutline,
   level4Subjects,
+  level5Subjects,
+  getSubjectLevel,
   passPercent,
   quizLength,
   subjectShortName,
@@ -15,13 +17,23 @@ import {
   themes,
 } from './constants';
 import { initThemeTitles, syncThemeTitlesFromRemote } from './themeTitles';
+import { initThemeNotes, syncThemeNotesFromRemote } from './themeNotes';
 import { initMockExams, syncMockExamsFromRemote } from './mockExams';
 import { describeCoverage, pickMockQuestions } from './mockExam';
 import { readLocal, readSession, writeLocal, writeSession } from './storage';
 import { trackQuizStart, trackQuizComplete } from './telemetry';
+import { scrollToTop } from './smoothScroll';
 import type { AnswerReview, MockExam, Question, ResultRow, Subject, Theme } from './types';
 
-export type QuizLevel = 'CIFS' | 'Level 4';
+export type QuizLevel = 'CIFS' | 'Level 4' | 'Level 5';
+
+/** Which screen a browser-history entry stands for, so Back moves one step at a time. */
+type QuizHistoryStep = 'subjects' | 'themes' | 'quiz';
+
+interface QuizHistoryState {
+  quizStep: QuizHistoryStep;
+  subject?: Subject;
+}
 
 interface QuizConfig {
   subject: Subject;
@@ -266,16 +278,43 @@ function formatDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+/** Everything that belongs to a quiz attempt, cleared when the student returns to the lists. */
+function idleFields(): Partial<QuizState> {
+  return {
+    phase: 'setup',
+    questions: [],
+    currentIndex: 0,
+    selectedIndex: null,
+    review: null,
+    score: 0,
+    startedAt: null,
+    error: null,
+    errorKind: undefined,
+    errorSubject: undefined,
+    errorTheme: undefined,
+    errorMockTitle: undefined,
+    errorNotice: undefined,
+    result: null,
+    busy: false,
+    mockExam: null,
+  };
+}
+
 export class QuizApp {
   private readonly root: HTMLElement;
   private state: QuizState;
   private readonly handleClick = (event: MouseEvent) => this.onClick(event);
   private readonly handleSubmit = (event: SubmitEvent) => this.onSubmit(event);
+  private readonly handlePopState = (event: PopStateEvent) => this.onPopState(event);
+  /** Bumped on every navigation so a quiz that was still loading cannot appear over the list. */
+  private runToken = 0;
+  /** Set when the Exit button (not the browser Back button) is what leaves the quiz: no confirm needed. */
+  private skipLeaveConfirm = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
     const initialConfig = loadConfig();
-    const initialLevel: QuizLevel = level4Subjects.includes(initialConfig.subject) ? 'Level 4' : 'CIFS';
+    const initialLevel: QuizLevel = getSubjectLevel(initialConfig.subject);
     this.state = {
       phase: 'setup',
       config: initialConfig,
@@ -299,14 +338,25 @@ export class QuizApp {
   mount(): void {
     initThemeTitles();
     initMockExams();
+    initThemeNotes();
     document.body.classList.remove('quiz-fullscreen');
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('submit', this.handleSubmit);
+    window.addEventListener('popstate', this.handlePopState);
+    // The page always opens on the subject list. A reload keeps the history entry it was on, so when that
+    // was a deeper step, rewind to the subject-list entry instead of leaving stale duplicates behind it.
+    const reloadedAt = this.currentStep();
+    if (reloadedAt === 'subjects') {
+      this.writeStep('subjects', undefined, 'replace');
+    } else {
+      window.history.go(reloadedAt === 'quiz' ? -2 : -1);
+    }
     this.render();
     // A failed mock exam sync (e.g. the table is not created yet) stays silent for students.
     void Promise.all([
       syncThemeTitlesFromRemote().catch(() => false),
       syncMockExamsFromRemote().catch(() => false),
+      syncThemeNotesFromRemote().catch(() => false),
     ]).then(() => {
       if (this.state.phase === 'setup') {
         this.render();
@@ -318,6 +368,75 @@ export class QuizApp {
     document.body.classList.remove('quiz-fullscreen');
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('submit', this.handleSubmit);
+    window.removeEventListener('popstate', this.handlePopState);
+    this.runToken += 1;
+  }
+
+  private currentStep(): QuizHistoryStep {
+    const step = (window.history.state as QuizHistoryState | null)?.quizStep;
+    return step === 'themes' || step === 'quiz' ? step : 'subjects';
+  }
+
+  private writeStep(step: QuizHistoryStep, subject: Subject | undefined, mode: 'push' | 'replace'): void {
+    const entry: QuizHistoryState = { quizStep: step, subject };
+    const url = window.location.pathname + window.location.search;
+    if (mode === 'push') {
+      window.history.pushState(entry, '', url);
+    } else {
+      window.history.replaceState(entry, '', url);
+    }
+  }
+
+  /** Shows the subject list or a subject's theme list and clears any quiz in progress. */
+  private showStep(step: 'subjects' | 'themes', subject?: Subject | null): void {
+    this.runToken += 1;
+    this.skipLeaveConfirm = false;
+    document.body.classList.remove('quiz-fullscreen');
+    const nextSubject = step === 'themes' ? (subject ?? this.state.config?.subject ?? null) : null;
+    this.setState({
+      ...idleFields(),
+      selectedSubject: nextSubject,
+      ...(nextSubject ? { selectedLevel: getSubjectLevel(nextSubject) } : {}),
+    });
+    scrollToTop();
+  }
+
+  /** Browser Back / Forward (and the in-app buttons, which use history.back()) land here. */
+  private onPopState(event: PopStateEvent): void {
+    if (window.location.pathname !== '/quiz') {
+      return;
+    }
+
+    const entry = event.state as QuizHistoryState | null;
+    const step: QuizHistoryStep = entry?.quizStep ?? 'subjects';
+    const phase = this.state.phase;
+
+    if (step === 'quiz') {
+      // Forward onto a quiz entry that no longer has a quiz behind it: step back to the list instead.
+      if (phase === 'setup') {
+        window.history.back();
+      }
+      return;
+    }
+
+    const quizRunning = phase === 'question' || phase === 'review';
+    if (quizRunning && !this.skipLeaveConfirm && !window.confirm('Leave this quiz? Your progress will be lost.')) {
+      // Stay: put the quiz entry back so the next Back asks again.
+      this.writeStep('quiz', this.state.config?.subject, 'push');
+      return;
+    }
+
+    this.showStep(step, entry?.subject);
+  }
+
+  /** In-app "go back one screen": uses the browser history so Back and the buttons never disagree. */
+  private goBackSteps(steps: number, fallback: 'subjects' | 'themes'): void {
+    const available = this.currentStep() === 'quiz' ? 2 : this.currentStep() === 'themes' ? 1 : 0;
+    if (steps > 0 && available >= steps) {
+      window.history.go(-steps);
+      return;
+    }
+    this.showStep(fallback, this.state.config?.subject);
   }
 
   private setState(next: Partial<QuizState>): void {
@@ -355,7 +474,8 @@ export class QuizApp {
     const config = this.state.config ?? defaultConfig();
     const activeSubject = this.state.selectedSubject;
     const currentLevel = this.state.selectedLevel;
-    const currentSubjects = currentLevel === 'Level 4' ? level4Subjects : cifsSubjects;
+    const currentSubjects =
+      currentLevel === 'Level 5' ? level5Subjects : currentLevel === 'Level 4' ? level4Subjects : cifsSubjects;
 
     return `
       <section class="quiz-flow">
@@ -363,7 +483,7 @@ export class QuizApp {
           <nav class="level-nav" aria-label="Quiz levels">
             <button class="level-tab ${currentLevel === 'CIFS' ? 'active' : ''}" type="button" data-action="level-select" data-level="CIFS">CIFS</button>
             <button class="level-tab ${currentLevel === 'Level 4' ? 'active' : ''}" type="button" data-action="level-select" data-level="Level 4">Level 4</button>
-            <button class="level-tab locked" type="button" disabled>Level 5 (Locked)</button>
+            <button class="level-tab ${currentLevel === 'Level 5' ? 'active' : ''}" type="button" data-action="level-select" data-level="Level 5">Level 5</button>
             <button class="level-tab locked" type="button" disabled>Level 6 (Locked)</button>
           </nav>
           <div class="subjects-grid">
@@ -388,6 +508,7 @@ export class QuizApp {
                 if (item.kind === 'mock') {
                   const exam = item.exam;
                   return `
+                  <div class="theme-item">
                   <button class="theme-btn mock-exam-btn" type="button" data-action="mock-select" data-mock-id="${escapeHtml(exam.id)}">
                     <div class="theme-btn-content">
                       <span class="theme-btn-tag mock-exam-tag">Mock Exam</span>
@@ -398,11 +519,13 @@ export class QuizApp {
                     </div>
                     <span class="theme-btn-arrow" aria-hidden="true">→</span>
                   </button>
+                  </div>
                 `;
                 }
 
                 const hasCustomTitle = item.hasCustomTitle;
                 return `
+                  <div class="theme-item">
                   <button class="theme-btn" type="button" data-action="theme-select" data-theme="${item.theme}">
                     <div class="theme-btn-content">
                       ${hasCustomTitle ? `<span class="theme-btn-tag">${item.theme}</span>` : ''}
@@ -410,6 +533,17 @@ export class QuizApp {
                     </div>
                     <span class="theme-btn-arrow" aria-hidden="true">→</span>
                   </button>
+                  ${
+                    item.notesUrl
+                      ? `<a class="theme-notes-link" href="${escapeHtml(item.notesUrl)}" target="_blank" rel="noopener noreferrer">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M8 7h8M8 11h6"/></svg>
+                          <span>Notes From Lecture</span>
+                          <span class="theme-notes-ext" aria-hidden="true">↗</span>
+                          <span class="visually-hidden">(opens in a new tab)</span>
+                        </a>`
+                      : ''
+                  }
+                  </div>
                 `;
               })
               .join('')}
@@ -720,6 +854,7 @@ export class QuizApp {
         return;
       }
 
+      this.writeStep('themes', subject, 'push');
       this.setState({
         selectedSubject: subject,
         config: {
@@ -727,11 +862,12 @@ export class QuizApp {
           theme: this.state.config?.theme ?? themes[0],
         },
       });
+      scrollToTop();
       return;
     }
 
     if (action === 'back-subjects') {
-      this.setState({ selectedSubject: null });
+      this.goBackSteps(this.currentStep() === 'themes' ? 1 : 0, 'subjects');
       return;
     }
 
@@ -779,49 +915,14 @@ export class QuizApp {
     }
 
     if (action === 'back-themes') {
-      document.body.classList.remove('quiz-fullscreen');
-      const subject = this.state.errorSubject ?? this.state.config?.subject ?? this.state.selectedSubject;
-      this.setState({
-        phase: 'setup',
-        selectedSubject: subject,
-        questions: [],
-        currentIndex: 0,
-        selectedIndex: null,
-        review: null,
-        score: 0,
-        startedAt: null,
-        error: null,
-        errorKind: undefined,
-        errorSubject: undefined,
-        errorTheme: undefined,
-        errorMockTitle: undefined,
-        errorNotice: undefined,
-        result: null,
-        busy: false,
-      });
+      // From a result or error screen the theme list is one entry back.
+      this.goBackSteps(this.currentStep() === 'quiz' ? 1 : 0, 'themes');
       return;
     }
 
     if (action === 'change-subject' || action === 'reset-setup') {
-      document.body.classList.remove('quiz-fullscreen');
-      this.setState({
-        phase: 'setup',
-        selectedSubject: null,
-        questions: [],
-        currentIndex: 0,
-        selectedIndex: null,
-        review: null,
-        score: 0,
-        startedAt: null,
-        error: null,
-        errorKind: undefined,
-        errorSubject: undefined,
-        errorTheme: undefined,
-        errorMockTitle: undefined,
-        errorNotice: undefined,
-        result: null,
-        busy: false,
-      });
+      // From a result or error screen the subject list is two entries back (quiz -> themes -> subjects).
+      this.goBackSteps(this.currentStep() === 'quiz' ? 2 : this.currentStep() === 'themes' ? 1 : 0, 'subjects');
       return;
     }
   }
@@ -845,12 +946,16 @@ export class QuizApp {
   }
 
   private async startQuiz(config: QuizConfig): Promise<void> {
+    const token = (this.runToken += 1);
+    this.skipLeaveConfirm = false;
+    // One history entry for the whole attempt: Retake replaces it, so Back is never more than one step from the list.
+    this.writeStep('quiz', config.subject, this.currentStep() === 'quiz' ? 'replace' : 'push');
     document.body.classList.add('quiz-fullscreen');
     this.setState({
       phase: 'loading',
       config,
       selectedSubject: config.subject,
-      selectedLevel: level4Subjects.includes(config.subject) ? 'Level 4' : 'CIFS',
+      selectedLevel: getSubjectLevel(config.subject),
       error: null,
       errorKind: undefined,
       errorSubject: undefined,
@@ -900,6 +1005,9 @@ export class QuizApp {
       } else {
         questions = pickQuizQuestions(await loadQuestionPool(config.subject, config.theme));
       }
+      if (token !== this.runToken) {
+        return; // The student navigated away while the questions were loading.
+      }
       this.state = {
         ...this.state,
         phase: 'question',
@@ -927,6 +1035,9 @@ export class QuizApp {
         mockExam ? { id: mockExam.id, title: mockExam.title } : undefined,
       );
     } catch (error) {
+      if (token !== this.runToken) {
+        return;
+      }
       document.body.classList.remove('quiz-fullscreen');
       if (error instanceof InsufficientQuestionsError) {
         this.setState({
@@ -958,25 +1069,9 @@ export class QuizApp {
   }
 
   private abortQuiz(): void {
-    document.body.classList.remove('quiz-fullscreen');
-    this.setState({
-      phase: 'setup',
-      selectedSubject: null,
-      questions: [],
-      currentIndex: 0,
-      selectedIndex: null,
-      review: null,
-      score: 0,
-      startedAt: null,
-      error: null,
-      errorKind: undefined,
-      errorSubject: undefined,
-      errorTheme: undefined,
-      errorMockTitle: undefined,
-      errorNotice: undefined,
-      result: null,
-      busy: false,
-    });
+    // The Exit button is an explicit choice, so it does not ask "leave this quiz?" like the browser Back button does.
+    this.skipLeaveConfirm = true;
+    this.goBackSteps(this.currentStep() === 'quiz' ? 1 : 0, 'themes');
   }
 
   private async submitAnswer(): Promise<void> {

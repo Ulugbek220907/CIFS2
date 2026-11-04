@@ -14,9 +14,11 @@ export type Level4Subject =
   | 'Fundamentals of Statistics'
   | 'Essentials of Economics';
 
+export type Level5Subject = 'Econometrics';
+
 export type LegacySubject = 'Foundations of Economics';
 
-export type Subject = CifsSubject | Level4Subject | LegacySubject;
+export type Subject = CifsSubject | Level4Subject | Level5Subject | LegacySubject;
 
 export type Theme =
   | 'Theme 1'

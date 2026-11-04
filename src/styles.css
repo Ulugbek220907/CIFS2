@@ -285,6 +285,8 @@ button {
 }
 
 .level-tab {
+  flex-shrink: 0;
+  white-space: nowrap;
   background: none;
   border: none;
   font-size: 1.05rem;
@@ -353,13 +355,30 @@ button {
 .back-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: 0.9rem;
-  margin-bottom: 2rem;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 1.1rem;
+  background: var(--bg-card);
+  border: 1.5px solid #c7d2fe;
+  border-radius: 999px;
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  cursor: pointer;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.back-link:hover {
+  background: rgba(79, 70, 229, 0.07);
+  border-color: var(--primary);
+}
+
+.back-link:focus-visible {
+  outline: 3px solid rgba(79, 70, 229, 0.35);
+  outline-offset: 2px;
 }
 
 .difficulty-options,
@@ -396,6 +415,55 @@ button {
   justify-content: space-between;
   gap: 1rem;
   text-align: left;
+}
+
+.theme-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.theme-notes-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+  margin-left: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  color: var(--primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.theme-notes-link:hover {
+  background: rgba(79, 70, 229, 0.08);
+  text-decoration: underline;
+}
+
+.theme-notes-link:focus-visible {
+  outline: 3px solid rgba(79, 70, 229, 0.35);
+  outline-offset: 1px;
+}
+
+.theme-notes-ext {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .theme-btn-content {
@@ -1180,6 +1248,29 @@ body.quiz-fullscreen .centered-shell {
 }
 
 @media (max-width: 640px) {
+  /* Four level tabs must fit a 360px screen: tighter tabs, and a scroll fallback on very narrow ones. */
+  .level-nav {
+    justify-content: safe center;
+    gap: 0.15rem;
+    margin-bottom: 1.75rem;
+    padding-bottom: 0.9rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .level-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .level-tab {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.9rem;
+  }
+
+  .level-tab.active::after {
+    bottom: -0.55rem;
+  }
+
   .site-header {
     padding: 0.75rem 1rem;
   }
@@ -1312,4 +1403,42 @@ body.quiz-fullscreen .centered-shell {
   .unavailable-actions .button {
     width: 100%;
   }
+}
+
+
+/* Smooth scrolling (Lenis): stop the browser's own smoothing from fighting it. */
+html {
+  scroll-behavior: smooth;
+}
+
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: clip;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Phones: taps respond instantly (no grey flash, no double-tap zoom delay). */
+button,
+a,
+select,
+[role='button'] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
