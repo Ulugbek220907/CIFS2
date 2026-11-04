@@ -12,7 +12,8 @@ import {
 } from './oceanSim';
 
 // Home-page background: a sea of small characters that rolls gently and ripples away from the mouse.
-// Touch screens and "reduce motion" visitors get one still frame and no animation loop at all.
+// Touch screens get a lighter version of the same sea (fewer, slightly larger characters, a slower idle sway) that
+// ripples under a finger. "Reduce motion" visitors get one still frame and no animation loop at all.
 
 const TOP_RGB: readonly [number, number, number] = [99, 102, 241]; // indigo
 const BOTTOM_RGB: readonly [number, number, number] = [56, 189, 248]; // sky blue
@@ -21,6 +22,12 @@ const QUIET_AFTER_MS = 4500;
 const IDLE_FRAME_MS = 62;
 /** Small characters, set close together. Cell size is the spacing; the glyph itself is a bit smaller. */
 const MIN_CELL = 14;
+/** Phones: a bit more space between characters keeps drawing (and battery) cheap. */
+const TOUCH_MIN_CELL = 17;
+const TOUCH_TARGET_CELLS = 1300;
+/** Phones sway at ~12fps when nobody is touching the screen. */
+const TOUCH_IDLE_FRAME_MS = 83;
+const TOUCH_QUIET_AFTER_MS = 3000;
 /** Hard ceiling on spacing, only reached after the speed governor has stepped down several times. */
 const MAX_CELL = 44;
 /** Kept under ~3,700 drawn characters including the edge margin: past ~4,096 sprites per frame the browser's 2D engine gets about 3x slower. */
@@ -36,11 +43,12 @@ function mix(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * t);
 }
 
-function wantsLiveMotion(): boolean {
-  if (typeof matchMedia !== 'function') return false;
-  const finePointer = matchMedia('(hover: hover) and (pointer: fine)').matches;
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  return finePointer && !reduced;
+type OceanMode = 'live' | 'touch' | 'still';
+
+function chooseMode(): OceanMode {
+  if (typeof matchMedia !== 'function') return 'still';
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return 'still';
+  return matchMedia('(hover: hover) and (pointer: fine)').matches ? 'live' : 'touch';
 }
 
 /** Starts the background on a canvas and returns a function that stops it and releases everything. */
@@ -48,8 +56,13 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return () => undefined;
 
-  const live = wantsLiveMotion();
-  canvas.dataset.oceanMode = live ? 'live' : 'still';
+  const mode = chooseMode();
+  const live = mode !== 'still';
+  const touch = mode === 'touch';
+  const minCell = touch ? TOUCH_MIN_CELL : MIN_CELL;
+  const idleFrameMs = touch ? TOUCH_IDLE_FRAME_MS : IDLE_FRAME_MS;
+  const quietAfterMs = touch ? TOUCH_QUIET_AFTER_MS : QUIET_AFTER_MS;
+  canvas.dataset.oceanMode = mode;
   canvas.dataset.oceanActive = '0';
 
   let cell = 16;
@@ -60,7 +73,7 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
   /** A fixed tiny offset per cell, so neighbouring cells at the same height don't all show the identical character. */
   let jitter = new Float32Array(4);
   let swellField: SwellField = createSwellField(1, 1, 16);
-  let targetCells = TARGET_CELLS;
+  let targetCells = touch ? TOUCH_TARGET_CELLS : TARGET_CELLS;
   let stepSeconds = 1 / 60;
   /** Pre-rendered glyphs: one column per character, one row per colour band. Copying a sprite is far cheaper than drawing text. */
   let atlas: HTMLCanvasElement | null = null;
@@ -113,7 +126,7 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
     canvas.width = Math.max(1, Math.round(width * dpr));
     canvas.height = Math.max(1, Math.round(height * dpr));
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    cell = Math.min(MAX_CELL, Math.max(MIN_CELL, Math.sqrt((width * height) / targetCells)));
+    cell = Math.min(MAX_CELL, Math.max(minCell, Math.sqrt((width * height) / targetCells)));
     grid = createGrid(Math.ceil(width / cell) + 2, Math.ceil(height / cell) + 2);
     stepSeconds = 1 / (60 * Math.min(2.5, REFERENCE_CELL / cell));
     swellField = createSwellField(grid.cols, grid.rows, cell);
@@ -189,7 +202,7 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
     if (stopped) return;
     raf = requestAnimationFrame(tick);
     const active = now < quietUntil;
-    if (!active && wasActive === false && now - lastDraw < IDLE_FRAME_MS) {
+    if (!active && wasActive === false && now - lastDraw < idleFrameMs) {
       return; // idle sea: skip every other frame
     }
     const dt = Math.min(0.1, (now - (lastFrame || now)) / 1000);
@@ -218,22 +231,48 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
     degradeIfSlow();
   };
 
-  const onPointerMove = (event: PointerEvent): void => {
-    if (event.pointerType !== 'mouse') return;
+  /** A moving pointer (mouse or finger) pushes the water along its path. */
+  const stir = (x: number, y: number): void => {
     const previous = lastPointer;
-    lastPointer = { x: event.clientX, y: event.clientY };
+    lastPointer = { x, y };
     if (!previous) return;
-    const speed = Math.hypot(event.clientX - previous.x, event.clientY - previous.y);
+    const speed = Math.hypot(x - previous.x, y - previous.y);
     if (speed < 1) return;
     // Sizes are in pixels, converted to cells, so ripples look the same however fine the grid is.
-    addImpulse(grid, event.clientX / cell - 0.5, event.clientY / cell - 0.5, Math.max(2, 85 / cell), Math.min(0.55, 0.03 + speed * 0.006));
-    quietUntil = performance.now() + QUIET_AFTER_MS;
+    addImpulse(grid, x / cell - 0.5, y / cell - 0.5, Math.max(2, 85 / cell), Math.min(0.55, 0.03 + speed * 0.006));
+    quietUntil = performance.now() + quietAfterMs;
+  };
+
+  /** A click or tap drops a bigger splash. */
+  const splash = (x: number, y: number): void => {
+    addImpulse(grid, x / cell - 0.5, y / cell - 0.5, Math.max(3, 150 / cell), 2);
+    quietUntil = performance.now() + quietAfterMs;
+  };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType === 'mouse') stir(event.clientX, event.clientY);
   };
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.pointerType !== 'mouse') return;
-    addImpulse(grid, event.clientX / cell - 0.5, event.clientY / cell - 0.5, Math.max(3, 150 / cell), 2);
-    quietUntil = performance.now() + QUIET_AFTER_MS;
+    if (event.pointerType === 'mouse') splash(event.clientX, event.clientY);
+  };
+
+  // Touch uses touch events: they keep firing while the page scrolls (pointer events are cancelled then), and
+  // they are passive, so scrolling stays native.
+  const onTouchStart = (event: TouchEvent): void => {
+    const point = event.touches[0];
+    if (!point) return;
+    lastPointer = { x: point.clientX, y: point.clientY };
+    splash(point.clientX, point.clientY);
+  };
+
+  const onTouchMove = (event: TouchEvent): void => {
+    const point = event.touches[0];
+    if (point) stir(point.clientX, point.clientY);
+  };
+
+  const onTouchEnd = (): void => {
+    lastPointer = null;
   };
 
   const onResize = (): void => {
@@ -260,8 +299,15 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
   }
 
   if (live) {
-    window.addEventListener('pointermove', onPointerMove, { passive: true });
-    window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    if (touch) {
+      window.addEventListener('touchstart', onTouchStart, { passive: true });
+      window.addEventListener('touchmove', onTouchMove, { passive: true });
+      window.addEventListener('touchend', onTouchEnd, { passive: true });
+      window.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    } else {
+      window.addEventListener('pointermove', onPointerMove, { passive: true });
+      window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    }
     raf = requestAnimationFrame(tick);
   } else {
     draw(1.3);
@@ -274,6 +320,10 @@ export function mountOcean(canvas: HTMLCanvasElement): () => void {
     window.removeEventListener('resize', onResize);
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerdown', onPointerDown);
+    window.removeEventListener('touchstart', onTouchStart);
+    window.removeEventListener('touchmove', onTouchMove);
+    window.removeEventListener('touchend', onTouchEnd);
+    window.removeEventListener('touchcancel', onTouchEnd);
     ctx.clearRect(0, 0, width, height);
     atlas = null;
   };
