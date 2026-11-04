@@ -2762,3 +2762,12 @@ body:has(.theme-modal-backdrop) .admin-toast-container {
 .mock-fieldset-note {
   margin: 0.15rem 0 0.5rem;
 }
+
+/* Theme names modal: the "Notes From Lecture" link field under each name */
+.theme-input-item .theme-notes-label {
+  margin-top: 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+  justify-content: flex-start;
+}

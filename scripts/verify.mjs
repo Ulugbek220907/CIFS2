@@ -73,7 +73,7 @@ test('Subject theme counts and options in getSubjectThemes & resolveTheme', asyn
   const { getSubjectThemes, resolveTheme, subjects } = await import('../src/constants.ts');
 
   // Verify all 12 subjects have all 12 themes
-  assert.equal(subjects.length, 12, 'Total 12 subjects (6 CIFS + 6 Level 4)');
+  assert.equal(subjects.length, 13, 'Total 13 subjects (6 CIFS + 6 Level 4 + 1 Level 5)');
   for (const subject of subjects) {
     const subjectThemes = getSubjectThemes(subject);
     assert.equal(subjectThemes.length, 12, `${subject} must have 12 themes`);
@@ -720,4 +720,69 @@ test('is_admin() is never loosened to "any signed-in user" in any migration', ()
   const strict = fs.readFileSync(`${dir}/0010_restore_strict_is_admin.sql`, 'utf8');
   assert.match(strict, /app_metadata'? ->> 'role'\) = 'admin'/);
   assert.match(strict, /ulugbekisoqov22@gmail\.com/);
+});
+
+
+test('Level 5: Econometrics is a subject under Level 5, and levels map correctly', async () => {
+  const { level5Subjects, subjects, getSubjectLevel, subjectShortName } = await import('../src/constants.ts');
+  assert.deepEqual(level5Subjects, ['Econometrics']);
+  assert.ok(subjects.includes('Econometrics'));
+  assert.equal(subjectShortName('Econometrics'), 'EM');
+  assert.equal(getSubjectLevel('Econometrics'), 'Level 5');
+  assert.equal(getSubjectLevel('Math for Eco'), 'Level 4');
+  assert.equal(getSubjectLevel('Quantitative Methods'), 'CIFS');
+  assert.equal(getSubjectLevel('Foundations of Economics'), 'CIFS');
+});
+
+test('normalizeNotesUrl: only clean https links get through', async () => {
+  const { normalizeNotesUrl, NOTES_URL_MAX } = await import('../src/notesLink.ts');
+  // blank removes the link
+  for (const blank of ['', '   ', undefined, null]) {
+    assert.deepEqual(normalizeNotesUrl(blank), { ok: true, value: '' });
+  }
+  // https kept, bare domain gets https://, surrounding space trimmed
+  assert.equal(normalizeNotesUrl('https://www.notion.so/Lecture-1-abc123').value, 'https://www.notion.so/Lecture-1-abc123');
+  assert.equal(normalizeNotesUrl('  notion.so/Lecture-1-abc123 ').value, 'https://notion.so/Lecture-1-abc123');
+  assert.equal(normalizeNotesUrl('https://x.notion.site/Page?pvs=4#heading').value, 'https://x.notion.site/Page?pvs=4#heading');
+  // everything that could run script or leave https is refused
+  for (const bad of [
+    'javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,<script>1</script>', 'http://notion.so/page',
+    'ftp://notion.so/x', 'vbscript:x', '//evil.com', 'https://', 'https://localhost', 'not a link',
+    'https://user:pass@notion.so/x', 'https://notion.so/with space',
+  ]) {
+    assert.equal(normalizeNotesUrl(bad).ok, false, `${bad} must be refused`);
+  }
+  assert.equal(normalizeNotesUrl(`https://notion.so/${'a'.repeat(NOTES_URL_MAX)}`).ok, false, 'too long');
+  assert.equal(normalizeNotesUrl(12345).ok, true, 'non-strings count as blank');
+});
+
+test('getSubjectThemes carries the lecture notes link for each theme', async () => {
+  const { getSubjectThemes, getSubjectOutline, updateThemeNotesCache, getThemeNotesUrl } = await import('../src/constants.ts');
+  try {
+    updateThemeNotesCache({ 'Math for Eco': { 'Theme 2': 'https://notion.so/lecture-2' } });
+    const themes = getSubjectThemes('Math for Eco');
+    assert.equal(themes[0].notesUrl, '');
+    assert.equal(themes[1].notesUrl, 'https://notion.so/lecture-2');
+    assert.equal(getThemeNotesUrl('Math for Eco', 'Theme 2'), 'https://notion.so/lecture-2');
+    // other subjects never see it
+    assert.equal(getSubjectThemes('Econometrics')[1].notesUrl, '');
+    const outline = getSubjectOutline('Math for Eco').filter((item) => item.kind === 'theme');
+    assert.equal(outline[1].notesUrl, 'https://notion.so/lecture-2');
+  } finally {
+    updateThemeNotesCache({});
+  }
+});
+
+test('Migration 0011 adds Econometrics everywhere subjects are enforced, plus theme_notes', () => {
+  const path = 'supabase/migrations/0011_level5_and_theme_notes.sql';
+  assert.ok(fs.existsSync(path), `${path} exists`);
+  const sql = fs.readFileSync(path, 'utf8');
+  for (const table of ['questions', 'results', 'site_analytics', 'mock_exams']) {
+    assert.match(sql, new RegExp(`alter table public\\.${table} add constraint ${table}_subject_check`), `${table} subject check updated`);
+  }
+  assert.equal((sql.match(/^\s+'Econometrics'$/gm) ?? []).length, 4, 'Econometrics added to all four lists');
+  assert.match(sql, /create table if not exists public\.theme_notes/i);
+  assert.match(sql, /url ~ '\^https:\/\/\[\^\[:space:\]\]\+\$'/, 'https-only check on the url');
+  assert.match(sql, /enable row level security/i);
+  assert.equal((sql.match(/public\.is_admin\(\)/g) ?? []).length, 4, 'insert/update(x2)/delete are admin only');
 });

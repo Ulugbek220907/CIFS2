@@ -18,7 +18,18 @@ export const level4Subjects: Subject[] = [
   'Essentials of Economics',
 ];
 
-export const subjects: Subject[] = [...cifsSubjects, ...level4Subjects];
+export const level5Subjects: Subject[] = ['Econometrics'];
+
+export const subjects: Subject[] = [...cifsSubjects, ...level4Subjects, ...level5Subjects];
+
+export type SubjectLevel = 'CIFS' | 'Level 4' | 'Level 5';
+
+/** The level tab a subject lives under on the quiz page. */
+export function getSubjectLevel(subject: Subject): SubjectLevel {
+  if (level5Subjects.includes(subject)) return 'Level 5';
+  if (level4Subjects.includes(subject)) return 'Level 4';
+  return 'CIFS';
+}
 
 export const themes: Theme[] = [
   'Theme 1',
@@ -70,6 +81,8 @@ export function subjectShortName(subject: Subject): string {
       return 'FoS';
     case 'Essentials of Economics':
       return 'EoE';
+    case 'Econometrics':
+      return 'EM';
   }
 }
 
@@ -78,6 +91,8 @@ export interface SubjectThemeOption {
   title: string;
   themeNumber: number;
   hasCustomTitle: boolean;
+  /** Notion (or other https) lecture-notes link for this theme, or '' when none is set. */
+  notesUrl: string;
 }
 
 type ThemeTitlesMap = Record<string, Record<string, string>>;
@@ -103,8 +118,21 @@ export function getSubjectThemes(subject?: Subject): SubjectThemeOption[] {
       themeNumber,
       title: customTitle || theme,
       hasCustomTitle: Boolean(customTitle),
+      notesUrl: getThemeNotesUrl(subject, theme),
     };
   });
+}
+
+// "Notes From Lecture" links per subject and theme, filled by initThemeNotes() / loadThemeNotes() in themeNotes.ts.
+let themeNotesCache: Record<string, Record<string, string>> = {};
+
+export function updateThemeNotesCache(notes: Record<string, Record<string, string>>): void {
+  themeNotesCache = { ...notes };
+}
+
+export function getThemeNotesUrl(subject?: Subject, theme?: Theme): string {
+  if (!subject || !theme) return '';
+  return themeNotesCache[subject]?.[theme]?.trim() ?? '';
 }
 
 // Mock exams, filled by initMockExams() / loadMockExams() in mockExams.ts.

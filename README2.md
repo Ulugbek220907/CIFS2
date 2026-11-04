@@ -19,7 +19,7 @@ Create a local `.env` file based on `.env.example`:
 ## Supabase setup
 
 1. Create a new Supabase project.
-2. Run the migrations in `supabase/migrations/` in order, starting with `0001_initial.sql`. Theme names need `0006_theme_titles.sql`; saving them fails with a message if that table is missing. Mock exams need `0008_mock_exams.sql` (until it is run the admin can't save them and students simply see no mock exams), and `0009_mock_exam_questions.sql` to let a mock exam have its own questions. Run `0010_restore_strict_is_admin.sql` too: it makes sure only real admins (the listed admin email, or an account with `app_metadata.role = 'admin'`) can write to the database.
+2. Run the migrations in `supabase/migrations/` in order, starting with `0001_initial.sql`. Theme names need `0006_theme_titles.sql`; saving them fails with a message if that table is missing. Mock exams need `0008_mock_exams.sql` (until it is run the admin can't save them and students simply see no mock exams), and `0009_mock_exam_questions.sql` to let a mock exam have its own questions. `0011_level5_and_theme_notes.sql` adds the Level 5 subject (Econometrics) and the per-theme "Notes From Lecture" links. Run `0010_restore_strict_is_admin.sql` too: it makes sure only real admins (the listed admin email, or an account with `app_metadata.role = 'admin'`) can write to the database.
 3. Enable Anonymous Sign-Ins in Supabase Auth so public quiz sessions can store results under an auth user id.
 4. Create your admin email/password accounts in Supabase Auth.
 5. Keep public sign-ups disabled.
@@ -31,6 +31,7 @@ Create a local `.env` file based on `.env.example`:
 - `questions` stores the quiz content, answer options, and explanations.
 - `results` stores quiz attempts for the signed-in user id.
 - `theme_titles` stores the custom theme names set in the admin panel.
+- `theme_notes` stores the optional https "Notes From Lecture" (Notion) link shown under each theme.
 - `mock_exams` stores the mock exams that sit between themes (title, position, optional source themes, question count). A mock exam always includes its own questions (`questions.mock_exam_id`) and fills any remaining slots evenly from its source themes, so no questions are duplicated.
 - RLS allows public reads on `questions`, anonymous/authenticated inserts on `results` only for the current user, and non-anonymous authenticated writes on `questions`.
 
@@ -51,6 +52,8 @@ The production output is the static `dist/` folder. Deploy that folder to Vercel
 
 ## Notes
 
+- Each quiz step (subjects, themes, quiz) is its own browser-history entry, so Back moves one step at a time. Leaving a running quiz with Back asks for confirmation.
+- Smooth scrolling uses [Lenis](https://github.com/darkroomengineering/lenis); it is switched off for visitors who prefer reduced motion, and inner scroll areas (modals, text boxes, anything with `data-lenis-prevent`) keep normal scrolling.
 - The public quiz flow uses sessionStorage to cache question pools for the current browser session.
 - The admin bundle is lazy-loaded and only fetched when `/admin` is visited directly.
 - Images are kept to a single optimized SVG logo to minimize payload and avoid layout shift.
