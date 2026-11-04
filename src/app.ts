@@ -2,8 +2,10 @@ import { clearNode, escapeHtml } from './dom';
 import { QuizApp } from './quiz';
 import { trackPageVisit } from './telemetry';
 import { scrollToTop } from './smoothScroll';
+import { mountOcean } from './oceanBackground';
 
 let activeQuiz: QuizApp | null = null;
+let stopOcean: (() => void) | null = null;
 let mountedRoot: HTMLElement | null = null;
 let currentRoute = '';
 
@@ -44,11 +46,16 @@ function renderBanner(): string {
 
 function renderHome(): string {
   return `
+    <canvas class="ocean-bg" aria-hidden="true"></canvas>
     <section class="home-hero">
-      <h1>Welcome to CIFS Support quizium</h1>
-      <a class="cta-btn" href="/quiz" data-nav>
-        Explore Quizzes <span aria-hidden="true">→</span>
-      </a>
+      <div class="home-hero-card">
+        <span class="home-eyebrow">Practice quizzes</span>
+        <h1>Welcome to CIFS Support quizium</h1>
+        <p class="home-sub">Practise by theme or take a mock exam, and see the right answer straight away.</p>
+        <a class="cta-btn" href="/quiz" data-nav>
+          Explore Quizzes <span aria-hidden="true">→</span>
+        </a>
+      </div>
     </section>
   `;
 }
@@ -92,6 +99,8 @@ async function renderRoute(): Promise<void> {
   currentRoute = pathname;
   activeQuiz?.destroy();
   activeQuiz = null;
+  stopOcean?.();
+  stopOcean = null;
   if (!firstRender) {
     scrollToTop();
   }
@@ -116,6 +125,10 @@ async function renderRoute(): Promise<void> {
   }
 
   view.innerHTML = renderHome();
+  const oceanCanvas = view.querySelector<HTMLCanvasElement>('.ocean-bg');
+  if (oceanCanvas) {
+    stopOcean = mountOcean(oceanCanvas);
+  }
 }
 
 export function bootApp(root: HTMLElement | null): void {

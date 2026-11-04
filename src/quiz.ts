@@ -491,7 +491,8 @@ export class QuizApp {
               .map(
                 (subject) => `
                   <button class="subject-card" type="button" data-action="subject-select" data-subject="${escapeHtml(subject)}" title="${escapeHtml(subject)}">
-                    ${escapeHtml(subjectShortName(subject))}
+                    <span class="subject-abbr">${escapeHtml(subjectShortName(subject))}</span>
+                    <span class="subject-name">${escapeHtml(subject)}</span>
                   </button>
                 `,
               )

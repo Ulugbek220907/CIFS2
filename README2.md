@@ -54,6 +54,8 @@ The production output is the static `dist/` folder. Deploy that folder to Vercel
 
 - Each quiz step (subjects, themes, quiz) is its own browser-history entry, so Back moves one step at a time. Leaving a running quiz with Back asks for confirmation.
 - Smooth scrolling uses [Lenis](https://github.com/darkroomengineering/lenis); it is switched off for visitors who prefer reduced motion, and inner scroll areas (modals, text boxes, anything with `data-lenis-prevent`) keep normal scrolling.
+- The home page has an animated background of characters that sways like ocean swells and ripples away from the mouse (`src/oceanBackground.ts`, maths in `src/oceanSim.ts`). It only runs on the home page, sleeps when the mouse is still, and on touch screens or with "reduce motion" it is a single still frame with no animation loop.
+- The site uses the self-hosted Plus Jakarta Sans variable font (`@fontsource-variable/plus-jakarta-sans`), so no request goes to Google Fonts.
 - The public quiz flow uses sessionStorage to cache question pools for the current browser session.
 - The admin bundle is lazy-loaded and only fetched when `/admin` is visited directly.
 - Images are kept to a single optimized SVG logo to minimize payload and avoid layout shift.
