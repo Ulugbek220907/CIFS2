@@ -1,3 +1,4 @@
+import '@fontsource-variable/plus-jakarta-sans';
 import 'katex/dist/katex.min.css';
 import './styles.css';
 import { bootApp } from './app';

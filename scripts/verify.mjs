@@ -786,3 +786,99 @@ test('Migration 0011 adds Econometrics everywhere subjects are enforced, plus th
   assert.match(sql, /enable row level security/i);
   assert.equal((sql.match(/public\.is_admin\(\)/g) ?? []).length, 4, 'insert/update(x2)/delete are admin only');
 });
+
+test('ocean simulation: ripples spread, fade out, and never blow up', async () => {
+  const { createGrid, addImpulse, stepWave, gridEnergy } = await import('../src/oceanSim.ts');
+  const grid = createGrid(60, 40);
+  assert.equal(gridEnergy(grid), 0, 'a flat sea has no energy');
+
+  addImpulse(grid, 30, 20, 3, 1);
+  const fresh = gridEnergy(grid);
+  assert.ok(fresh > 0, 'the impulse adds energy');
+
+  // The disturbance travels outwards: a cell ~10 cells away stays flat at first, then moves.
+  const far = 20 * 60 + 40;
+  assert.equal(grid.h[far], 0);
+  let moved = false;
+  for (let i = 0; i < 80; i += 1) {
+    stepWave(grid);
+    if (Math.abs(grid.h[far]) > 1e-4) moved = true;
+    for (const value of grid.h) assert.ok(Number.isFinite(value) && Math.abs(value) <= 3, 'heights stay finite and clamped');
+  }
+  assert.ok(moved, 'the ripple reaches distant cells');
+
+  for (let i = 0; i < 1500; i += 1) stepWave(grid);
+  assert.ok(gridEnergy(grid) < fresh * 0.01, 'ripples fade away (damping works)');
+
+  // Edges never move.
+  const edgeGrid = createGrid(20, 12);
+  addImpulse(edgeGrid, 10, 6, 5, 2);
+  for (let i = 0; i < 200; i += 1) stepWave(edgeGrid);
+  for (let x = 0; x < 20; x += 1) {
+    assert.equal(edgeGrid.h[x], 0, 'top edge stays flat');
+    assert.equal(edgeGrid.h[11 * 20 + x], 0, 'bottom edge stays flat');
+  }
+});
+
+test('ocean simulation: impulses near or outside the edge are safe', async () => {
+  const { createGrid, addImpulse, stepWave } = await import('../src/oceanSim.ts');
+  const grid = createGrid(10, 8);
+  for (const [x, y] of [[-50, -50], [500, 3], [4, 900], [0, 0], [9, 7], [Number.NaN, 2]]) {
+    assert.doesNotThrow(() => addImpulse(grid, x, y, 4, 1));
+  }
+  assert.doesNotThrow(() => { for (let i = 0; i < 50; i += 1) stepWave(grid, 5, 1.5); }, 'out-of-range speed is clamped');
+  assert.equal(grid.h.length, 80);
+  assert.ok([...grid.h].every((v) => Number.isFinite(v)), 'no NaN leaks into the grid');
+});
+
+test('ocean swell and glyph mapping stay in range', async () => {
+  const { swell, glyphIndex, OCEAN_GLYPHS } = await import('../src/oceanSim.ts');
+  for (let x = -200; x <= 2200; x += 97) {
+    for (let y = -200; y <= 1400; y += 89) {
+      for (const t of [0, 1.3, 9.7, 1234.5]) {
+        const s = swell(x, y, t);
+        assert.ok(s >= -1.0001 && s <= 1.0001, `swell ${s} within -1..1`);
+      }
+    }
+  }
+  assert.equal(glyphIndex(0), 0);
+  assert.equal(glyphIndex(1), OCEAN_GLYPHS.length - 1);
+  assert.equal(glyphIndex(-5), 0);
+  assert.equal(glyphIndex(7), OCEAN_GLYPHS.length - 1);
+  assert.equal(glyphIndex(Number.NaN), 0);
+  let previous = -1;
+  for (let level = 0; level <= 1; level += 0.01) {
+    const index = glyphIndex(level);
+    assert.ok(index >= previous, 'denser glyphs for higher levels');
+    previous = index;
+  }
+  assert.equal(new Set(OCEAN_GLYPHS).size, OCEAN_GLYPHS.length, 'no duplicate glyphs');
+  const have = new Set(OCEAN_GLYPHS);
+  for (const group of ['0123456789', 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '!@#$%^&*()_+-=[]{};:\'",.<>/?\\|`~']) {
+    for (const ch of group) assert.ok(have.has(ch), `the ocean uses "${ch}"`);
+  }
+  assert.equal(OCEAN_GLYPHS.length, 94, 'all 94 printable ASCII characters (no space)');
+  // The ends of the ramp are visually light vs heavy.
+  assert.ok(['.', '`', "'", ','].includes(OCEAN_GLYPHS[0]) || OCEAN_GLYPHS.indexOf('.') < 3, 'faintest characters first');
+  assert.ok(OCEAN_GLYPHS.slice(-6).includes('@') && OCEAN_GLYPHS.slice(-6).includes('W'), 'heaviest characters last');
+});
+
+test('ocean swell: the precomputed per-cell version equals the plain formula', async () => {
+  const { swell, createSwellField, swellClock, swellAtCell } = await import('../src/oceanSim.ts');
+  const cols = 40;
+  const rows = 25;
+  const cell = 17;
+  const field = createSwellField(cols, rows, cell);
+  let worst = 0;
+  for (const t of [0, 0.37, 4.2, 99.9, 1234.567]) {
+    const clock = swellClock(t);
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = col * cell + cell / 2;
+        const y = row * cell + cell / 2;
+        worst = Math.max(worst, Math.abs(swellAtCell(field, clock, row, row * cols + col) - swell(x, y, t)));
+      }
+    }
+  }
+  assert.ok(worst < 1e-4, `largest difference ${worst}`);
+});

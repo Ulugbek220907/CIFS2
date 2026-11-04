@@ -31,6 +31,10 @@ export function initSmoothScroll(): Lenis | null {
   if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) {
     return null;
   }
+  // Touch screens keep native scrolling (it is smoother there), so Lenis would only burn a frame loop for nothing.
+  if (typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches) {
+    return null;
+  }
 
   const lenis = new Lenis({
     lerp: 0.1, // smoothness: lower = floatier, higher = tighter
