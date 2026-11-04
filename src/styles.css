@@ -1261,12 +1261,37 @@ body.quiz-fullscreen .centered-shell {
   margin-top: auto;
   border-top: 1px solid var(--border);
   background: var(--bg-card);
-  padding: 1.25rem 2rem;
+  padding: 1.1rem 2rem;
   display: flex;
-  justify-content: flex-end;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.2rem;
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.footer-linkedin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0.3rem 0.85rem;
+  margin-right: -0.85rem; /* so the text lines up with the credit above it, not the pill's padding */
+  border-radius: 999px;
+  color: #0a66c2; /* LinkedIn blue, 5.9:1 on white */
+  font-weight: 700;
+  transition: background 0.15s ease;
+}
+
+.footer-linkedin:hover {
+  background: rgba(10, 102, 194, 0.09);
+  text-decoration: underline;
+}
+
+.footer-linkedin:focus-visible {
+  outline: 3px solid rgba(10, 102, 194, 0.4);
+  outline-offset: 2px;
 }
 
 .footer-credit span {
@@ -1370,7 +1395,12 @@ body.quiz-fullscreen .centered-shell {
   }
 
   .site-footer {
-    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+
+  .footer-linkedin {
+    margin-right: 0;
   }
 
   body.quiz-fullscreen .main-container {
