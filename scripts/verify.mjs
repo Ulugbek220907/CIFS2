@@ -73,7 +73,7 @@ test('Subject theme counts and options in getSubjectThemes & resolveTheme', asyn
   const { getSubjectThemes, resolveTheme, subjects } = await import('../src/constants.ts');
 
   // Verify all 12 subjects have all 12 themes
-  assert.equal(subjects.length, 13, 'Total 13 subjects (6 CIFS + 6 Level 4 + 1 Level 5)');
+  assert.equal(subjects.length, 14, 'Total 14 subjects (6 CIFS + 6 Level 4 + 2 Level 5)');
   for (const subject of subjects) {
     const subjectThemes = getSubjectThemes(subject);
     assert.equal(subjectThemes.length, 12, `${subject} must have 12 themes`);
@@ -725,9 +725,12 @@ test('is_admin() is never loosened to "any signed-in user" in any migration', ()
 
 test('Level 5: Econometrics is a subject under Level 5, and levels map correctly', async () => {
   const { level5Subjects, subjects, getSubjectLevel, subjectShortName } = await import('../src/constants.ts');
-  assert.deepEqual(level5Subjects, ['Econometrics']);
+  assert.deepEqual(level5Subjects, ['Econometrics', 'Management Accounting']);
   assert.ok(subjects.includes('Econometrics'));
   assert.equal(subjectShortName('Econometrics'), 'EM');
+  assert.equal(subjectShortName('Management Accounting'), 'MA');
+  assert.equal(getSubjectLevel('Management Accounting'), 'Level 5');
+  assert.ok(subjects.includes('Management Accounting'));
   assert.equal(getSubjectLevel('Econometrics'), 'Level 5');
   assert.equal(getSubjectLevel('Math for Eco'), 'Level 4');
   assert.equal(getSubjectLevel('Quantitative Methods'), 'CIFS');
@@ -881,4 +884,13 @@ test('ocean swell: the precomputed per-cell version equals the plain formula', a
     }
   }
   assert.ok(worst < 1e-4, `largest difference ${worst}`);
+});
+
+test('Migration 0012 adds Management Accounting to every subject check', () => {
+  const sql = fs.readFileSync('supabase/migrations/0012_management_accounting.sql', 'utf8');
+  for (const table of ['questions', 'results', 'site_analytics', 'mock_exams']) {
+    assert.match(sql, new RegExp(`alter table public\\.${table} add constraint ${table}_subject_check`), `${table} updated`);
+  }
+  assert.equal((sql.match(/^\s+'Management Accounting'$/gm) ?? []).length, 4, 'added to all four lists');
+  assert.equal((sql.match(/^\s+'Econometrics',?$/gm) ?? []).length, 4, 'Econometrics kept in all four lists');
 });
