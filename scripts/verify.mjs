@@ -34,7 +34,7 @@ test('Abbreviation mapping in subjectShortName', async () => {
   assert.equal(subjectShortName('Understanding Finance'), 'UF');
 
   // Level 4
-  assert.equal(subjectShortName('Math for Eco'), 'ME');
+  assert.equal(subjectShortName('Math for Eco'), 'MfE');
   assert.equal(subjectShortName('Exploring Economics'), 'EE');
   assert.equal(subjectShortName('Contemporary Issues in Global Economy'), 'CIGE');
   assert.equal(subjectShortName('Financial Accounting'), 'FA');
@@ -73,7 +73,7 @@ test('Subject theme counts and options in getSubjectThemes & resolveTheme', asyn
   const { getSubjectThemes, resolveTheme, subjects } = await import('../src/constants.ts');
 
   // Verify all 12 subjects have all 12 themes
-  assert.equal(subjects.length, 14, 'Total 14 subjects (6 CIFS + 6 Level 4 + 2 Level 5)');
+  assert.equal(subjects.length, 15, 'Total 15 subjects (6 CIFS + 6 Level 4 + 3 Level 5)');
   for (const subject of subjects) {
     const subjectThemes = getSubjectThemes(subject);
     assert.equal(subjectThemes.length, 12, `${subject} must have 12 themes`);
@@ -726,10 +726,13 @@ test('is_admin() is never loosened to "any signed-in user" in any migration', ()
 
 test('Level 5: Econometrics is a subject under Level 5, and levels map correctly', async () => {
   const { level5Subjects, subjects, getSubjectLevel, subjectShortName } = await import('../src/constants.ts');
-  assert.deepEqual(level5Subjects, ['Econometrics', 'Management Accounting']);
+  assert.deepEqual(level5Subjects, ['Econometrics', 'Management Accounting', 'Intermediate Microeconomics']);
   assert.ok(subjects.includes('Econometrics'));
   assert.equal(subjectShortName('Econometrics'), 'EM');
   assert.equal(subjectShortName('Management Accounting'), 'MA');
+  assert.equal(subjectShortName('Intermediate Microeconomics'), 'IM');
+  assert.equal(getSubjectLevel('Intermediate Microeconomics'), 'Level 5');
+  assert.ok(subjects.includes('Intermediate Microeconomics'));
   assert.equal(getSubjectLevel('Management Accounting'), 'Level 5');
   assert.ok(subjects.includes('Management Accounting'));
   assert.equal(getSubjectLevel('Econometrics'), 'Level 5');
@@ -906,4 +909,18 @@ test('Ornament strips frame the page top and bottom and use the bundled SVG tile
   const svg = fs.readFileSync('src/assets/ornament-band.svg', 'utf8');
   assert.match(svg, /<svg[^>]*viewBox="0 0 64 20"/);
   assert.ok(!/<script|href=|http:\/\/(?!www\.w3\.org)/i.test(svg), 'tile is plain shapes only');
+});
+
+test('Migration 0013 adds Intermediate Microeconomics and keeps every earlier subject in all four checks', async () => {
+  const { subjects } = await import('../src/constants.ts');
+  const sql = fs.readFileSync('supabase/migrations/0013_intermediate_microeconomics.sql', 'utf8');
+  for (const table of ['questions', 'results', 'site_analytics', 'mock_exams']) {
+    assert.match(sql, new RegExp(`alter table public\\.${table} add constraint ${table}_subject_check`), `${table} updated`);
+  }
+  // Every subject the app knows (plus the legacy IBE name) must be allowed by all four checks.
+  for (const name of [...subjects, 'Foundations of Economics']) {
+    const lines = sql.split('\n').filter((line) => line.trim().replace(/,$/, '') === `'${name}'`);
+    assert.equal(lines.length, 4, `${name} is in all four lists`);
+  }
+  assert.equal((sql.match(/^\s+'Intermediate Microeconomics'$/gm) ?? []).length, 4, 'new subject is the last entry of all four lists');
 });

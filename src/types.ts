@@ -14,7 +14,7 @@ export type Level4Subject =
   | 'Fundamentals of Statistics'
   | 'Essentials of Economics';
 
-export type Level5Subject = 'Econometrics' | 'Management Accounting';
+export type Level5Subject = 'Econometrics' | 'Management Accounting' | 'Intermediate Microeconomics';
 
 export type LegacySubject = 'Foundations of Economics';
 
