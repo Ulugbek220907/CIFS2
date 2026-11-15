@@ -16,6 +16,7 @@ import {
 } from '../constants';
 import { initThemeTitles, loadThemeTitlesForAdmin, setAllCustomThemeTitles } from '../themeTitles';
 import { initThemeNotes, loadThemeNotes, setAllThemeNotes } from '../themeNotes';
+import { openAcsManager } from './acsManager';
 import { normalizeNotesUrl } from '../notesLink';
 import { deleteMockExam, initMockExams, loadMockExams, saveMockExam } from '../mockExams';
 import {
@@ -1012,6 +1013,10 @@ export function bootAdmin(root: HTMLElement): void {
               <button class="admin-action" type="button" data-action="open-mock-manager" title="Add and edit mock exams between themes">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                 <span>Mock exams</span>
+              </button>
+              <button class="admin-action" type="button" data-action="open-acs-manager" title="Edit the Listening and Argumentation Preparation pages of Academic Communication Skills">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                <span>ACS content</span>
               </button>
               <button class="admin-action" type="button" data-action="open-theme-manager" title="Manage custom names for themes">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
@@ -2307,6 +2312,11 @@ export function bootAdmin(root: HTMLElement): void {
     if (action.dataset.action === 'toggle-subject-breakdown') {
       state.showSubjectBreakdown = !state.showSubjectBreakdown;
       render();
+      return;
+    }
+
+    if (action.dataset.action === 'open-acs-manager') {
+      openAcsManager((message, type) => showToast(message, type));
       return;
     }
 

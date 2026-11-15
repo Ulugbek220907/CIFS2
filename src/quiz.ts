@@ -23,16 +23,30 @@ import { describeCoverage, pickMockQuestions } from './mockExam';
 import { readLocal, readSession, writeLocal, writeSession } from './storage';
 import { trackQuizStart, trackQuizComplete } from './telemetry';
 import { scrollToTop } from './smoothScroll';
+import { ACS_SUBJECT, isAcsKind, isAcsPosition, type AcsKind } from './acsModel';
+import { initAcs, getAcsItem, syncAcsFromRemote } from './acs';
+import { mountAcsDetail, renderAcsDetail, renderAcsItemList, renderAcsLanding } from './acsView';
 import type { AnswerReview, MockExam, Question, ResultRow, Subject, Theme } from './types';
 
 export type QuizLevel = 'CIFS' | 'Level 4' | 'Level 5';
 
 /** Which screen a browser-history entry stands for, so Back moves one step at a time. */
-type QuizHistoryStep = 'subjects' | 'themes' | 'quiz';
+type QuizHistoryStep = 'subjects' | 'themes' | 'acs-section' | 'acs-item' | 'quiz';
 
 interface QuizHistoryState {
   quizStep: QuizHistoryStep;
   subject?: Subject;
+  /** Academic Communication Skills only: which section / item the entry shows. */
+  acsKind?: AcsKind;
+  acsPosition?: number;
+}
+
+/** How many history entries a step sits above the subject list (so Back and the in-app buttons can walk down). */
+const STEP_DEPTH: Record<QuizHistoryStep, number> = { subjects: 0, themes: 1, 'acs-section': 2, 'acs-item': 3, quiz: 2 };
+
+interface AcsLocation {
+  kind: AcsKind | null;
+  position: number | null;
 }
 
 interface QuizConfig {
@@ -84,6 +98,9 @@ interface QuizState {
   config: QuizConfig | null;
   selectedLevel: QuizLevel;
   selectedSubject: Subject | null;
+  /** Academic Communication Skills: the open section and item (null while on the section / subject list). */
+  acsKind: AcsKind | null;
+  acsPosition: number | null;
   userId: string | null;
   questions: Question[];
   currentIndex: number;
@@ -297,6 +314,8 @@ function idleFields(): Partial<QuizState> {
     result: null,
     busy: false,
     mockExam: null,
+    acsKind: null,
+    acsPosition: null,
   };
 }
 
@@ -310,6 +329,10 @@ export class QuizApp {
   private runToken = 0;
   /** Set when the Exit button (not the browser Back button) is what leaves the quiz: no confirm needed. */
   private skipLeaveConfirm = false;
+  /** Stops the audio player and saves the notepad of the Academic Communication Skills page on screen. */
+  private disposeAcs: (() => void) | null = null;
+  /** What the open ACS item looked like when drawn, to notice when a background refresh changed it. */
+  private acsRenderedKey = '';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -320,6 +343,8 @@ export class QuizApp {
       config: initialConfig,
       selectedLevel: initialLevel,
       selectedSubject: null,
+      acsKind: null,
+      acsPosition: null,
       userId: null,
       questions: [],
       currentIndex: 0,
@@ -339,6 +364,7 @@ export class QuizApp {
     initThemeTitles();
     initMockExams();
     initThemeNotes();
+    initAcs();
     document.body.classList.remove('quiz-fullscreen');
     this.root.addEventListener('click', this.handleClick);
     this.root.addEventListener('submit', this.handleSubmit);
@@ -349,7 +375,7 @@ export class QuizApp {
     if (reloadedAt === 'subjects') {
       this.writeStep('subjects', undefined, 'replace');
     } else {
-      window.history.go(reloadedAt === 'quiz' ? -2 : -1);
+      window.history.go(-STEP_DEPTH[reloadedAt]);
     }
     this.render();
     // A failed mock exam sync (e.g. the table is not created yet) stays silent for students.
@@ -357,14 +383,22 @@ export class QuizApp {
       syncThemeTitlesFromRemote().catch(() => false),
       syncMockExamsFromRemote().catch(() => false),
       syncThemeNotesFromRemote().catch(() => false),
+      syncAcsFromRemote().catch(() => 'failed' as const),
     ]).then(() => {
-      if (this.state.phase === 'setup') {
-        this.render();
+      if (this.state.phase !== 'setup') return;
+      // An open Academic Communication Skills item holds a playing recording and a notepad being typed in: only
+      // redraw it when what it shows has really changed, never for unrelated refreshes.
+      const { acsKind, acsPosition } = this.state;
+      if (acsKind && acsPosition !== null && this.acsRenderedKey === JSON.stringify(getAcsItem(acsKind, acsPosition))) {
+        return;
       }
+      this.render();
     });
   }
 
   destroy(): void {
+    this.disposeAcs?.();
+    this.disposeAcs = null;
     document.body.classList.remove('quiz-fullscreen');
     this.root.removeEventListener('click', this.handleClick);
     this.root.removeEventListener('submit', this.handleSubmit);
@@ -374,11 +408,16 @@ export class QuizApp {
 
   private currentStep(): QuizHistoryStep {
     const step = (window.history.state as QuizHistoryState | null)?.quizStep;
-    return step === 'themes' || step === 'quiz' ? step : 'subjects';
+    return step === 'themes' || step === 'quiz' || step === 'acs-section' || step === 'acs-item' ? step : 'subjects';
   }
 
-  private writeStep(step: QuizHistoryStep, subject: Subject | undefined, mode: 'push' | 'replace'): void {
-    const entry: QuizHistoryState = { quizStep: step, subject };
+  private writeStep(
+    step: QuizHistoryStep,
+    subject: Subject | undefined,
+    mode: 'push' | 'replace',
+    acs?: { kind: AcsKind; position?: number },
+  ): void {
+    const entry: QuizHistoryState = { quizStep: step, subject, acsKind: acs?.kind, acsPosition: acs?.position };
     const url = window.location.pathname + window.location.search;
     if (mode === 'push') {
       window.history.pushState(entry, '', url);
@@ -387,15 +426,24 @@ export class QuizApp {
     }
   }
 
-  /** Shows the subject list or a subject's theme list and clears any quiz in progress. */
-  private showStep(step: 'subjects' | 'themes', subject?: Subject | null): void {
+  /** Shows the subject list, a subject's theme list or an ACS page, and clears any quiz in progress. */
+  private showStep(
+    step: 'subjects' | 'themes' | 'acs-section' | 'acs-item',
+    subject?: Subject | null,
+    acs: AcsLocation = { kind: null, position: null },
+  ): void {
     this.runToken += 1;
     this.skipLeaveConfirm = false;
     document.body.classList.remove('quiz-fullscreen');
-    const nextSubject = step === 'themes' ? (subject ?? this.state.config?.subject ?? null) : null;
+    const onSubject = step !== 'subjects';
+    const nextSubject = onSubject ? (step === 'themes' ? (subject ?? this.state.config?.subject ?? null) : ACS_SUBJECT as Subject) : null;
+    const kind = step === 'acs-section' || step === 'acs-item' ? acs.kind : null;
+    const position = step === 'acs-item' && kind ? acs.position : null;
     this.setState({
       ...idleFields(),
       selectedSubject: nextSubject,
+      acsKind: kind,
+      acsPosition: position,
       ...(nextSubject ? { selectedLevel: getSubjectLevel(nextSubject) } : {}),
     });
     scrollToTop();
@@ -408,8 +456,13 @@ export class QuizApp {
     }
 
     const entry = event.state as QuizHistoryState | null;
-    const step: QuizHistoryStep = entry?.quizStep ?? 'subjects';
+    let step: QuizHistoryStep = entry?.quizStep ?? 'subjects';
     const phase = this.state.phase;
+    // An ACS entry without a valid section / item (a hand-edited history entry) falls back to the screen above it.
+    const entryKind = isAcsKind(entry?.acsKind) ? entry?.acsKind : null;
+    const entryPosition = isAcsPosition(entry?.acsPosition) ? entry?.acsPosition : null;
+    if (step === 'acs-item' && (!entryKind || entryPosition === null)) step = entryKind ? 'acs-section' : 'themes';
+    if (step === 'acs-section' && !entryKind) step = 'themes';
 
     if (step === 'quiz') {
       // Forward onto a quiz entry that no longer has a quiz behind it: step back to the list instead.
@@ -426,12 +479,12 @@ export class QuizApp {
       return;
     }
 
-    this.showStep(step, entry?.subject);
+    this.showStep(step, entry?.subject, { kind: entryKind, position: entryPosition });
   }
 
   /** In-app "go back one screen": uses the browser history so Back and the buttons never disagree. */
   private goBackSteps(steps: number, fallback: 'subjects' | 'themes'): void {
-    const available = this.currentStep() === 'quiz' ? 2 : this.currentStep() === 'themes' ? 1 : 0;
+    const available = STEP_DEPTH[this.currentStep()];
     if (steps > 0 && available >= steps) {
       window.history.go(-steps);
       return;
@@ -445,10 +498,14 @@ export class QuizApp {
   }
 
   private render(): void {
+    // Stop any recording and save the notepad before the page is replaced.
+    this.disposeAcs?.();
+    this.disposeAcs = null;
     clearNode(this.root);
 
     if (this.state.phase === 'setup') {
       this.root.innerHTML = this.renderSetup();
+      this.mountAcsPage();
       return;
     }
 
@@ -470,7 +527,25 @@ export class QuizApp {
     this.root.innerHTML = this.renderQuiz();
   }
 
+  /** Brings the audio player and notepad of an open ACS item to life (a no-op on every other screen). */
+  private mountAcsPage(): void {
+    const { acsKind, acsPosition } = this.state;
+    if (this.state.selectedSubject !== ACS_SUBJECT || !acsKind || acsPosition === null) return;
+    this.acsRenderedKey = JSON.stringify(getAcsItem(acsKind, acsPosition));
+    this.disposeAcs = mountAcsDetail(this.root, acsKind, acsPosition);
+  }
+
+  private renderAcs(): string {
+    const { acsKind, acsPosition } = this.state;
+    if (acsKind && acsPosition !== null) return renderAcsDetail(acsKind, acsPosition);
+    if (acsKind) return renderAcsItemList(acsKind);
+    return renderAcsLanding();
+  }
+
   private renderSetup(): string {
+    if (this.state.selectedSubject === ACS_SUBJECT) {
+      return `<section class="quiz-flow">${this.renderAcs()}</section>`;
+    }
     const config = this.state.config ?? defaultConfig();
     const activeSubject = this.state.selectedSubject;
     const currentLevel = this.state.selectedLevel;
@@ -864,6 +939,36 @@ export class QuizApp {
         },
       });
       scrollToTop();
+      return;
+    }
+
+    if (action === 'acs-section-select') {
+      const kind = actionButton.dataset.kind;
+      if (!isAcsKind(kind)) return;
+      this.writeStep('acs-section', ACS_SUBJECT as Subject, 'push', { kind });
+      this.setState({ acsKind: kind, acsPosition: null });
+      scrollToTop();
+      return;
+    }
+
+    if (action === 'acs-item-select') {
+      const position = Number(actionButton.dataset.position);
+      const kind = this.state.acsKind;
+      if (!kind || !isAcsPosition(position)) return;
+      this.writeStep('acs-item', ACS_SUBJECT as Subject, 'push', { kind, position });
+      this.setState({ acsPosition: position });
+      scrollToTop();
+      return;
+    }
+
+    if (action === 'acs-back') {
+      // One step up through the browser history, so the button and the Back key always agree.
+      const step = this.currentStep();
+      if (step === 'acs-item' || step === 'acs-section') {
+        window.history.back();
+      } else {
+        this.showStep('themes', ACS_SUBJECT as Subject);
+      }
       return;
     }
 
