@@ -924,3 +924,293 @@ test('Migration 0013 adds Intermediate Microeconomics and keeps every earlier su
   }
   assert.equal((sql.match(/^\s+'Intermediate Microeconomics'$/gm) ?? []).length, 4, 'new subject is the last entry of all four lists');
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Academic Communication Skills (ACS)
+// ---------------------------------------------------------------------------------------------------------------------
+test('ACS: normalizeAcsRows always returns exactly 16 clean items (8 per section)', async () => {
+  const { normalizeAcsRows, ACS_SLOTS } = await import('../src/acsModel.ts');
+  const empty = normalizeAcsRows(undefined);
+  assert.equal(empty.length, 16);
+  assert.equal(empty.filter((item) => item.kind === 'listening').length, ACS_SLOTS);
+  assert.equal(empty.filter((item) => item.kind === 'argumentation').length, ACS_SLOTS);
+  assert.deepEqual(empty.filter((item) => item.kind === 'listening').map((item) => item.position), [1, 2, 3, 4, 5, 6, 7, 8]);
+
+  const rows = normalizeAcsRows([
+    { kind: 'listening', position: 2, title: '  Trade  ', audio_path: 'listening/2-abc.mp3', audio_name: 'a.mp3', audio_size: 10, arguments: ['ignored'] },
+    { kind: 'argumentation', position: '3', title: 'Debate', audio_path: 'listening/x.mp3', arguments: [' one ', '', 5, 'two'] },
+    { kind: 'listening', position: 9, title: 'out of range' },
+    { kind: 'nonsense', position: 1 },
+    null,
+    'text',
+  ]);
+  assert.equal(rows.length, 16);
+  const l2 = rows.find((item) => item.kind === 'listening' && item.position === 2);
+  assert.equal(l2.title, 'Trade', 'titles are trimmed');
+  assert.equal(l2.audio_path, 'listening/2-abc.mp3');
+  assert.deepEqual(l2.arguments, [], 'a listening never carries arguments');
+  const a3 = rows.find((item) => item.kind === 'argumentation' && item.position === 3);
+  assert.deepEqual(a3.arguments, ['one', 'two'], 'blank and non-text arguments are dropped, text is trimmed');
+  assert.equal(a3.audio_path, null, 'an argumentation item never carries audio');
+});
+
+test('ACS: only audio paths this app creates are ever used', async () => {
+  const { isSafeAudioPath, normalizeAcsRows } = await import('../src/acsModel.ts');
+  for (const good of ['listening/1-abc123.mp3', 'listening/8-k2j9x.m4a']) assert.equal(isSafeAudioPath(good), true, good);
+  for (const bad of ['../evil.mp3', 'listening/../x.mp3', 'http://evil.example/x.mp3', 'listening/', '/listening/1-a.mp3', 'listening/A B.mp3', null, 5, 'argumentation/1-a.mp3', 'listening/' + 'a'.repeat(130)]) {
+    assert.equal(isSafeAudioPath(bad), false, String(bad));
+  }
+  const row = normalizeAcsRows([{ kind: 'listening', position: 1, audio_path: 'javascript:alert(1)' }]).find((item) => item.kind === 'listening' && item.position === 1);
+  assert.equal(row.audio_path, null, 'an unsafe stored path is discarded');
+});
+
+test('ACS: labels and status chips', async () => {
+  const { acsSlotLabel, acsFullLabel, acsItemStatus, blankAcsItem, acsItemHasContent } = await import('../src/acsModel.ts');
+  assert.equal(acsSlotLabel('listening', 3), 'Listening 3');
+  assert.equal(acsSlotLabel('argumentation', 8), 'Listening 8', 'both sections use "Listening N" buttons');
+  assert.equal(acsFullLabel({ ...blankAcsItem('listening', 3), title: 'Trade' }), 'Listening 3: Trade');
+  assert.equal(acsFullLabel({ ...blankAcsItem('listening', 3), title: '   ' }), 'Listening 3');
+  assert.equal(acsItemStatus(blankAcsItem('listening', 1)), 'Coming soon');
+  assert.equal(acsItemStatus({ ...blankAcsItem('listening', 1), audio_path: 'listening/1-a.mp3' }), 'Audio ready');
+  assert.equal(acsItemStatus(blankAcsItem('argumentation', 1)), 'Coming soon');
+  assert.equal(acsItemStatus({ ...blankAcsItem('argumentation', 1), arguments: ['a'] }), '1 argument');
+  assert.equal(acsItemStatus({ ...blankAcsItem('argumentation', 1), arguments: ['a', 'b', 'c'] }), '3 arguments');
+  assert.equal(acsItemHasContent(blankAcsItem('listening', 1)), false);
+});
+
+test('ACS: audio file checks and upload paths', async () => {
+  const { checkAudioFile, buildAudioPath, isSafeAudioPath, ACS_AUDIO_MAX_BYTES, formatBytes } = await import('../src/acsModel.ts');
+  assert.equal(checkAudioFile({ name: 'Lecture 1.MP3', size: 1000, type: 'audio/mpeg' }).ok, true);
+  assert.equal(checkAudioFile({ name: 'x.m4a', size: 1000, type: '' }).ok, true, 'some systems report no MIME type');
+  assert.equal(checkAudioFile({ name: 'x.m4a', size: 1000, type: '' }).contentType, 'audio/mp4');
+  assert.equal(checkAudioFile({ name: 'x.wav', size: 1000, type: 'audio/x-wav' }).contentType, 'audio/x-wav');
+  assert.equal(checkAudioFile({ name: 'notes.txt', size: 10, type: 'text/plain' }).ok, false);
+  assert.equal(checkAudioFile({ name: 'x.exe', size: 10, type: 'audio/mpeg' }).ok, false, 'the extension must be an audio one too');
+  assert.equal(checkAudioFile({ name: 'x.mp3', size: 10, type: 'image/png' }).ok, false);
+  assert.equal(checkAudioFile({ name: 'x.mp3', size: 0, type: 'audio/mpeg' }).ok, false);
+  assert.equal(checkAudioFile({ name: 'x.mp3', size: ACS_AUDIO_MAX_BYTES + 1, type: 'audio/mpeg' }).ok, false);
+  assert.equal(checkAudioFile({ name: 'x.mp3', size: ACS_AUDIO_MAX_BYTES, type: 'audio/mpeg' }).ok, true);
+  assert.match(checkAudioFile({ name: 'x.mp3', size: ACS_AUDIO_MAX_BYTES + 1, type: 'audio/mpeg' }).error, /50 MB/);
+  for (const [pos, ext, token] of [[1, 'mp3', 'ABC123'], [8, 'wav', 'x y!z'], [3, 'exe', 'tok'], [2, 'mp3', '']]) {
+    const path = buildAudioPath(pos, ext, token);
+    assert.equal(isSafeAudioPath(path), true, path);
+  }
+  assert.equal(buildAudioPath(3, 'exe', 'tok'), 'listening/3-tok.mp3', 'an unknown extension falls back to mp3');
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(2048), '2 KB');
+  assert.equal(formatBytes(5 * 1024 * 1024), '5.0 MB');
+  assert.equal(formatBytes(50 * 1024 * 1024), '50 MB');
+});
+
+test('ACS: arguments are cleaned and limited before saving', async () => {
+  const { prepareArgumentsForSave, ACS_ARGUMENT_MAX, ACS_ARGUMENTS_MAX } = await import('../src/acsModel.ts');
+  assert.deepEqual(prepareArgumentsForSave(['  a ', '', '   ', 'b\nc']), { ok: true, value: ['a', 'b\nc'] });
+  assert.equal(prepareArgumentsForSave(['x'.repeat(ACS_ARGUMENT_MAX + 1)]).ok, false);
+  assert.equal(prepareArgumentsForSave(['x'.repeat(ACS_ARGUMENT_MAX)]).ok, true);
+  assert.equal(prepareArgumentsForSave(Array.from({ length: ACS_ARGUMENTS_MAX + 1 }, () => 'a')).ok, false);
+  assert.equal(prepareArgumentsForSave(Array.from({ length: ACS_ARGUMENTS_MAX }, () => 'a')).ok, true);
+});
+
+test('ACS: clock text and notes helpers', async () => {
+  const { formatClock, clampNotes, countWords, ACS_NOTES_MAX } = await import('../src/acsModel.ts');
+  assert.equal(formatClock(0), '0:00');
+  assert.equal(formatClock(83.9), '1:23');
+  assert.equal(formatClock(3725), '1:02:05');
+  for (const odd of [NaN, Infinity, -5, undefined]) assert.equal(formatClock(odd), '0:00');
+  assert.equal(clampNotes('x'.repeat(ACS_NOTES_MAX + 50)).length, ACS_NOTES_MAX);
+  assert.equal(countWords('  one two\nthree  '), 3);
+  assert.equal(countWords('   '), 0);
+});
+
+test('ACS migration 0014: table, rules, public audio bucket writable only by admins', () => {
+  const sql = fs.readFileSync('supabase/migrations/0014_acs_listening_argumentation.sql', 'utf8');
+  assert.match(sql, /create table if not exists public\.acs_items/i);
+  assert.match(sql, /primary key \(kind, position\)/i);
+  assert.match(sql, /position between 1 and 8/i);
+  assert.match(sql, /kind in \('listening', 'argumentation'\)/i);
+  assert.match(sql, /alter table public\.acs_items enable row level security/i);
+  assert.match(sql, /create policy "acs_items are readable by anyone" on public\.acs_items for select using \(true\)/i);
+  for (const [name, cmd] of [['insertable', 'insert'], ['updatable', 'update'], ['deletable', 'delete']]) {
+    assert.match(sql, new RegExp(`create policy "acs_items are ${name} by admins" on public\\.acs_items for ${cmd}[^;]*public\\.is_admin\\(\\)`, 'i'), `${cmd} is admin-only`);
+  }
+  assert.match(sql, /insert into storage\.buckets[\s\S]*'acs-audio'[\s\S]*true/i, 'bucket is public so students can stream');
+  assert.match(sql, /file_size_limit[\s\S]*52428800/i);
+  for (const cmd of ['select', 'insert', 'update', 'delete']) {
+    assert.match(sql, new RegExp(`on storage\\.objects\\s+for ${cmd} to authenticated[^;]*public\\.is_admin\\(\\)`, 'is'), `storage ${cmd} is admin-only`);
+  }
+  assert.doesNotMatch(sql, /for (insert|update|delete)[^;]*to (anon|public)/i, 'no public writes');
+  assert.match(sql, /pg_notify\('pgrst',\s*'reload schema'\)/i);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Admin speed: paged questions, counts, server-side telemetry
+// ---------------------------------------------------------------------------------------------------------------------
+test('Admin paging: search filter escapes every special character', async () => {
+  const { escapeRegexTerm, quoteFilterValue, buildSearchFilter, normalizeSearchTerm, SEARCH_MAX_LENGTH } = await import('../src/admin/questionQuery.ts');
+  assert.equal(buildSearchFilter('   '), null);
+  assert.equal(buildSearchFilter(''), null);
+  assert.equal(escapeRegexTerm('a.b*c+d?(e)[f]{g}|h^$\\i'), 'a\\.b\\*c\\+d\\?\\(e\\)\\[f\\]\\{g\\}\\|h\\^\\$\\\\i');
+  assert.equal(quoteFilterValue('say "hi", (ok)'), '"say \\"hi\\", (ok)"');
+  const filter = buildSearchFilter('100%, "x"');
+  // every column is searched, with the same quoted value, so a comma or quote in the term cannot add a condition
+  for (const column of ['question_text', 'explanation', 'options->>0', 'options->>1', 'options->>2', 'options->>3']) {
+    assert.ok(filter.includes(`${column}.imatch.`), column);
+  }
+  assert.equal(filter.split('.imatch.').length - 1, 6);
+  assert.equal(normalizeSearchTerm('  hello  '), 'hello');
+  assert.equal(normalizeSearchTerm('x'.repeat(500)).length, SEARCH_MAX_LENGTH);
+  // a typed regex like ".*" must be taken literally
+  const literal = buildSearchFilter('.*');
+  assert.ok(literal.includes('"\\\\.\\\\*"') || literal.includes('imatch."\\\\.\\\\*"'), literal);
+});
+
+test('Admin paging: keyset cursor, ties broken by id', async () => {
+  const { buildKeysetFilter, cursorOf, QUESTION_PAGE_SIZE } = await import('../src/admin/questionQuery.ts');
+  const cursor = cursorOf({ id: '0a92ba74-0f44-4e02-ad87-9289b4aa2886', created_at: '2026-10-01T18:45:52.43737+00:00', extra: 1 });
+  assert.deepEqual(cursor, { id: '0a92ba74-0f44-4e02-ad87-9289b4aa2886', created_at: '2026-10-01T18:45:52.43737+00:00' });
+  assert.equal(
+    buildKeysetFilter(cursor),
+    'created_at.lt."2026-10-01T18:45:52.43737+00:00",and(created_at.eq."2026-10-01T18:45:52.43737+00:00",id.lt."0a92ba74-0f44-4e02-ad87-9289b4aa2886")',
+  );
+  assert.ok(QUESTION_PAGE_SIZE >= 12 && QUESTION_PAGE_SIZE <= 50, 'a page is big enough to fill a screen and small enough to be quick');
+});
+
+test('Admin paging: client-side filters mirror the database filters', async () => {
+  const { questionMatchesFilters, questionTarget, sameFilters } = await import('../src/admin/questionQuery.ts');
+  const q = { id: '1', subject: 'Econometrics', theme: 'Theme 3', mock_exam_id: null, question_text: 'What is Heteroskedasticity?', options: ['a', 'Var(u|x) constant', 'c', 'd'], correct_index: 0, explanation: 'Because', created_at: 'x' };
+  const mock = { ...q, id: '2', theme: null, mock_exam_id: 'abc' };
+  const all = { subject: 'All', theme: 'All', search: '' };
+  assert.equal(questionMatchesFilters(q, all), true);
+  assert.equal(questionMatchesFilters(q, { ...all, subject: 'Econometrics' }), true);
+  assert.equal(questionMatchesFilters(q, { ...all, subject: 'Math for Eco' }), false);
+  assert.equal(questionMatchesFilters(q, { ...all, theme: 'Theme 3' }), true);
+  assert.equal(questionMatchesFilters(q, { ...all, theme: 'Theme 4' }), false);
+  assert.equal(questionMatchesFilters(mock, { ...all, theme: 'mock:abc' }), true);
+  assert.equal(questionMatchesFilters(mock, { ...all, theme: 'Theme 3' }), false);
+  assert.equal(questionTarget(mock), 'mock:abc');
+  assert.equal(questionMatchesFilters(q, { ...all, search: 'heteroSKEDAS' }), true, 'case-insensitive, matches the prompt');
+  assert.equal(questionMatchesFilters(q, { ...all, search: 'var(u|x)' }), true, 'matches an option, symbols taken literally');
+  assert.equal(questionMatchesFilters(q, { ...all, search: 'because' }), true, 'matches the explanation');
+  assert.equal(questionMatchesFilters(q, { ...all, search: 'nope' }), false);
+  assert.equal(sameFilters({ ...all, search: ' a ' }, { ...all, search: 'a' }), true);
+  assert.equal(sameFilters(all, { ...all, subject: 'Econometrics' }), false);
+});
+
+test('Admin counts: totals per subject / theme / mock exam, kept right between refreshes', async () => {
+  const c = await import('../src/admin/questionCounts.ts');
+  const { getSubjectAliases } = await import('../src/constants.ts');
+  const rows = c.parseQuestionCounts([
+    { subject: 'Econometrics', theme: 'Theme 1', mock_exam_id: null, question_count: 25 },
+    { subject: 'Econometrics', theme: 'Theme 2', mock_exam_id: null, question_count: '10' },
+    { subject: 'Introduction to Business and Economics', theme: 'Theme 1', mock_exam_id: null, question_count: 5 },
+    { subject: 'Foundations of Economics', theme: 'Theme 1', mock_exam_id: null, question_count: 7 },
+    { subject: 'Econometrics', theme: null, mock_exam_id: 'm1', question_count: 4 },
+    { subject: 5, question_count: 1 },
+    { subject: 'Bad', question_count: -3 },
+    'junk',
+  ]);
+  assert.equal(rows.length, 5, 'unusable rows are dropped');
+  assert.equal(c.totalQuestions(rows), 51);
+  assert.equal(c.countThemeQuestions(rows, getSubjectAliases('Econometrics'), 'Theme 1'), 25);
+  assert.equal(c.countThemeQuestions(rows, getSubjectAliases('Introduction to Business and Economics'), 'Theme 1'), 12, 'the legacy IBE name counts too');
+  assert.equal(c.countAvailableQuestions(rows, getSubjectAliases('Econometrics'), ['Theme 1', 'Theme 2']), 35, 'a mock exam only borrows from themes, never other exams\' questions');
+  assert.equal(c.countOwnQuestions(rows, 'm1'), 4);
+  assert.equal(c.countOwnQuestions(rows, null), 0);
+  const q = { subject: 'Econometrics', theme: 'Theme 1', mock_exam_id: null };
+  const up = c.adjustQuestionCounts(rows, q, 1);
+  assert.equal(c.totalQuestions(up), 52);
+  assert.equal(c.totalQuestions(rows), 51, 'the original array is not changed');
+  assert.equal(c.countThemeQuestions(up, getSubjectAliases('Econometrics'), 'Theme 1'), 26);
+  assert.equal(c.countThemeQuestions(c.adjustQuestionCounts(up, q, -1), getSubjectAliases('Econometrics'), 'Theme 1'), 25);
+  assert.equal(c.countThemeQuestions(c.adjustQuestionCounts(rows, { subject: 'Econometrics', theme: 'Theme 9', mock_exam_id: null }, 1), getSubjectAliases('Econometrics'), 'Theme 9'), 1, 'a new theme row appears');
+  assert.equal(c.countOwnQuestions(c.adjustQuestionCounts(rows, { subject: 'Econometrics', theme: null, mock_exam_id: 'm1' }, -4), 'm1'), 0);
+  assert.equal(c.totalQuestions(c.removeExamFromCounts(rows, 'm1')), 47);
+});
+
+test('Telemetry: the database summary gives exactly the numbers the event-by-event maths gives', async () => {
+  const a = await import('../src/admin/analyticsSummary.ts');
+  // a messy little history: repeat visitors, completions with and without score/time, mock exams, odd subjects
+  const events = [];
+  let n = 0;
+  const add = (event_type, session_id, extra = {}) => events.push({ id: String(n++), event_type, session_id, created_at: '2026-10-01T00:00:00Z', ...extra });
+  for (const s of ['a', 'a', 'b', 'c', 'c', 'c']) add('page_visit', s);
+  add('quiz_start', 'a', { subject: 'Econometrics', theme: 'Theme 1' });
+  add('quiz_start', 'a', { subject: 'Econometrics', theme: 'Theme 1' });
+  add('quiz_start', 'b', { subject: 'Econometrics', theme: 'Theme 2' });
+  add('quiz_start', 'b', { subject: 'Math for Eco', theme: null, metadata: { mock_exam_title: '  Mock 1  ' } });
+  add('quiz_start', 'c', { subject: 'Math for Eco', theme: 'Theme 7' });
+  add('quiz_complete', 'a', { subject: 'Econometrics', theme: 'Theme 1', score: 20, time_taken_seconds: 700 });
+  add('quiz_complete', 'b', { subject: 'Math for Eco', theme: null, metadata: { mock_exam_title: '  Mock 1  ' }, score: 17, time_taken_seconds: 1000 });
+  add('quiz_complete', 'c', { subject: 'Math for Eco', theme: 'Theme 7', score: null, time_taken_seconds: null });
+  add('quiz_complete', 'c', { subject: 'Math for Eco', theme: 'Theme 7', score: 11, time_taken_seconds: 333 });
+
+  const slow = a.viewFromEvents(events);
+  // what admin_analytics_summary() would return for these events
+  const totals = {
+    totalVisitors: new Set(events.filter((e) => e.event_type === 'page_visit').map((e) => e.session_id)).size,
+    totalVisits: 6, quizzesStarted: 5, quizzesCompleted: 4, scoreSum: 20 + 17 + 11, scoreCount: 3, timeSum: 700 + 1000 + 333, timeCount: 3,
+  };
+  const summary = a.parseAnalyticsSummary({
+    ...totals,
+    subjects: [
+      { subject: 'Econometrics', starts: 3, completions: 1, themes: [{ theme: 'Theme 1', starts: 2, completions: 1 }, { theme: 'Theme 2', starts: 1, completions: 0 }] },
+      { subject: 'Math for Eco', starts: 2, completions: 3, themes: [{ theme: 'Mock Exam: Mock 1', starts: 1, completions: 1 }, { theme: 'Theme 7', starts: 1, completions: 2 }] },
+    ],
+  });
+  const fast = a.viewFromSummary(summary);
+  assert.deepEqual(fast.kpis, slow.kpis);
+  assert.deepEqual(fast.funnel, slow.funnel);
+  assert.deepEqual(fast.breakdown, slow.breakdown);
+  assert.equal(fast.kpis.totalVisitors, 3);
+  assert.equal(fast.kpis.avgScore, 16);
+  assert.equal(fast.kpis.avgTimeSeconds, 678);
+  assert.equal(fast.kpis.completionRate, 80);
+});
+
+test('Telemetry: empty and malformed summaries never break the dashboard', async () => {
+  const a = await import('../src/admin/analyticsSummary.ts');
+  assert.equal(a.parseAnalyticsSummary(null), null);
+  assert.equal(a.parseAnalyticsSummary([]), null);
+  assert.equal(a.parseAnalyticsSummary({ hello: 'world' }), null);
+  const empty = a.parseAnalyticsSummary({ totalVisitors: 0, totalVisits: 0, quizzesStarted: 0, quizzesCompleted: 0, subjects: [] });
+  const view = a.viewFromSummary(empty);
+  assert.equal(view.kpis.completionRate, 0);
+  assert.equal(view.kpis.avgScore, null);
+  assert.equal(view.kpis.avgTimeSeconds, null);
+  assert.equal(view.funnel[0].count, 0);
+  assert.deepEqual(view.breakdown, []);
+  const odd = a.parseAnalyticsSummary({ totalVisitors: 'x', quizzesStarted: -4, quizzesCompleted: null, subjects: [null, { subject: 3 }, { subject: 'S', starts: '2', themes: [{ theme: 5 }, { theme: 'Theme 1', starts: 1, completions: 1 }] }] });
+  assert.equal(odd.totals.totalVisitors, 0);
+  assert.equal(odd.subjects.length, 1);
+  assert.equal(odd.subjects[0].themes.length, 1);
+});
+
+test('Telemetry: time ranges', async () => {
+  const { analyticsSince } = await import('../src/admin/analyticsSummary.ts');
+  const now = new Date('2026-11-15T14:30:00');
+  assert.equal(analyticsSince('all', now), null);
+  assert.equal(new Date(analyticsSince('7d', now)).getTime(), now.getTime() - 7 * 86400000);
+  const today = new Date(analyticsSince('today', now));
+  assert.equal(today.getHours(), 0);
+  assert.equal(today.getDate(), now.getDate());
+});
+
+test('Migration 0015: admin functions run with the caller\'s rights, and only for admins', () => {
+  const sql = fs.readFileSync('supabase/migrations/0015_admin_speed.sql', 'utf8');
+  assert.match(sql, /create or replace function public\.admin_analytics_summary\(p_since timestamptz default null\)/i);
+  assert.match(sql, /create or replace function public\.admin_question_counts\(\)/i);
+  assert.equal((sql.match(/security invoker/gi) ?? []).length, 2, 'both functions respect row-level security');
+  assert.doesNotMatch(sql, /security definer/i, 'neither function bypasses row-level security');
+  assert.match(sql, /revoke all on function public\.admin_analytics_summary\(timestamptz\) from public, anon/i);
+  assert.match(sql, /grant execute on function public\.admin_analytics_summary\(timestamptz\) to authenticated/i);
+  assert.match(sql, /create index if not exists questions_created_at_id_idx on public\.questions \(created_at desc, id desc\)/i);
+  assert.match(sql, /pg_notify\('pgrst',\s*'reload schema'\)/i);
+});
+
+test('Smooth scrolling: phones and tablets get touch smoothing, older iOS and reduced motion do not', () => {
+  const code = fs.readFileSync('src/smoothScroll.ts', 'utf8');
+  assert.match(code, /syncTouch:\s*true/);
+  assert.match(code, /prefers-reduced-motion/);
+  assert.match(code, /Number\(ios\[1\]\)\s*>=\s*16/);
+  assert.match(code, /type === 'range'/, 'the audio seek bar keeps its own drag');
+});

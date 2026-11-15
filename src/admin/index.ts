@@ -17,6 +17,45 @@ import {
 import { initThemeTitles, loadThemeTitlesForAdmin, setAllCustomThemeTitles } from '../themeTitles';
 import { initThemeNotes, loadThemeNotes, setAllThemeNotes } from '../themeNotes';
 import { openAcsManager } from './acsManager';
+import {
+  analyticsSince,
+  computeAnalyticsFunnel,
+  parseAnalyticsSummary,
+  viewFromEvents,
+  viewFromSummary,
+  type AnalyticsEvent,
+  type AnalyticsKpis,
+  type AnalyticsTimeRange,
+  type AnalyticsView,
+} from './analyticsSummary';
+import {
+  adjustQuestionCounts,
+  countAvailableQuestions,
+  countOwnQuestions,
+  countThemeQuestions,
+  parseQuestionCounts,
+  removeExamFromCounts,
+  totalQuestions,
+  type QuestionCountRow,
+} from './questionCounts';
+import {
+  MOCK_TARGET_PREFIX,
+  QUESTION_COLUMNS,
+  QUESTION_PAGE_SIZE,
+  buildKeysetFilter,
+  buildSearchFilter,
+  cursorOf,
+  normalizeSearchTerm,
+  questionMatchesFilters,
+  questionTarget,
+  type QuestionFilters,
+} from './questionQuery';
+import { readSession, writeSession } from '../storage';
+import { ACS_SUBJECT } from '../acsModel';
+
+// The telemetry maths lives in analyticsSummary.ts; these are re-exported so existing imports keep working.
+export { computeAnalyticsKpis, computeAnalyticsFunnel, computeSubjectBreakdown } from './analyticsSummary';
+export type { AnalyticsEvent, AnalyticsKpis, AnalyticsTimeRange, FunnelStage, SubjectBreakdownItem } from './analyticsSummary';
 import { normalizeNotesUrl } from '../notesLink';
 import { deleteMockExam, initMockExams, loadMockExams, saveMockExam } from '../mockExams';
 import {
@@ -33,55 +72,21 @@ import '../admin.css';
 
 type AdminPhase = 'loading' | 'login' | 'dashboard';
 
-/** Supabase caps each response at 1000 rows; events are read in pages of that size. */
+/** Supabase caps each response at 1000 rows; the fallback reads events in pages of that size. */
 const ANALYTICS_PAGE_SIZE = 1000;
-/** Safety cap on how many pages one refresh reads (100,000 events). */
+/** Safety cap on how many pages the fallback reads (100,000 events). */
 const ANALYTICS_MAX_PAGES = 100;
-
-export type AnalyticsTimeRange = 'all' | '7d' | 'today';
-
-export interface AnalyticsEvent {
-  id: string;
-  event_type: 'page_visit' | 'quiz_start' | 'quiz_complete';
-  session_id: string;
-  subject?: Subject | null;
-  theme?: Theme | null;
-  score?: number | null;
-  total_questions?: number | null;
-  time_taken_seconds?: number | null;
-  metadata?: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface AnalyticsKpis {
-  totalVisitors: number;
-  totalVisits: number;
-  quizzesStarted: number;
-  quizzesCompleted: number;
-  completionRate: number;
-  avgScore: number | null;
-  avgTimeSeconds: number | null;
-}
-
-export interface FunnelStage {
-  stage: string;
-  count: number;
-  rate: number;
-  dropOff: number;
-}
-
-export interface SubjectBreakdownItem {
-  subject: string;
-  starts: number;
-  completions: number;
-  completionRate: number;
-  themes: {
-    theme: string;
-    starts: number;
-    completions: number;
-    completionRate: number;
-  }[];
-}
+/** The subjects an admin can add questions and themes to (ACS has its own listening/argument pages instead). */
+const quizSubjects = subjects.filter((subject) => subject !== ACS_SUBJECT);
+const EMPTY_KPIS: AnalyticsKpis = {
+  totalVisitors: 0,
+  totalVisits: 0,
+  quizzesStarted: 0,
+  quizzesCompleted: 0,
+  completionRate: 0,
+  avgScore: null,
+  avgTimeSeconds: null,
+};
 
 interface MockDraft {
   title: string;
@@ -95,7 +100,17 @@ interface AdminState {
   userEmail: string | null;
   error: string | null;
   busy: boolean;
+  /** The pages of the question library loaded so far (already filtered by the database). */
   questions: Question[];
+  /** How many questions match the filters in total (null until the first page has answered). */
+  questionTotal: number | null;
+  questionsLoading: boolean;
+  questionsLoadingMore: boolean;
+  /** True once the last page has been read. */
+  questionsDone: boolean;
+  questionsError: string | null;
+  /** Question totals per subject / theme / mock exam, from the database (null until loaded). */
+  questionCounts: QuestionCountRow[] | null;
   filterSubject: Subject | 'All';
   /** 'All', a theme, or `mock:<id>` for one mock exam's own questions. */
   filterTheme: string;
@@ -109,10 +124,11 @@ interface AdminState {
   mockEditingId: string | null;
   mockDraft: MockDraft;
   mockSaving: boolean;
-  analyticsEvents: AnalyticsEvent[];
+  /** The numbers the Telemetry Command Center shows (null until the first answer or a cached copy). */
+  analyticsView: AnalyticsView | null;
   analyticsLoading: boolean;
   analyticsError: string | null;
-  /** True when the event history was longer than the safety cap, so older events are not counted. */
+  /** True when the fallback path hit its safety cap, so older events are not counted. */
   analyticsTruncated: boolean;
   analyticsTimeRange: AnalyticsTimeRange;
   showSubjectBreakdown: boolean;
@@ -167,13 +183,6 @@ function isSubject(value: unknown): value is Subject {
 
 function isTheme(value: unknown): value is Theme {
   return typeof value === 'string' && (themes as readonly string[]).includes(value);
-}
-
-const MOCK_TARGET_PREFIX = 'mock:';
-
-/** The select/filter value for a question: its theme, or `mock:<id>` for a mock exam's own question. */
-function questionTarget(question: Question): string {
-  return question.mock_exam_id ? `${MOCK_TARGET_PREFIX}${question.mock_exam_id}` : (question.theme ?? '');
 }
 
 function parseQuestionTarget(value: string): { theme: Theme | null; mock_exam_id: string | null } {
@@ -238,142 +247,6 @@ function getThemeBadgeLabel(question: Question): string {
   const theme = question.theme ?? 'Theme 1';
   const title = getQuizThemeTitle(question.subject, theme);
   return title !== theme ? `${theme}: ${title}` : theme;
-}
-
-export function computeAnalyticsKpis(events: AnalyticsEvent[]): AnalyticsKpis {
-  const pageVisits = events.filter((e) => e.event_type === 'page_visit');
-  const quizStarts = events.filter((e) => e.event_type === 'quiz_start');
-  const quizCompletes = events.filter((e) => e.event_type === 'quiz_complete');
-
-  const totalVisitors = new Set(pageVisits.map((e) => e.session_id)).size;
-  const totalVisits = pageVisits.length;
-  const quizzesStarted = quizStarts.length;
-  const quizzesCompleted = quizCompletes.length;
-
-  const completionRate = quizzesStarted > 0 ? (quizzesCompleted / quizzesStarted) * 100 : 0;
-
-  let avgScore: number | null = null;
-  let avgTimeSeconds: number | null = null;
-
-  if (quizCompletes.length > 0) {
-    const scored = quizCompletes.filter((e) => typeof e.score === 'number' && e.score !== null);
-    if (scored.length > 0) {
-      const sumScore = scored.reduce((sum, e) => sum + (e.score ?? 0), 0);
-      avgScore = Number((sumScore / scored.length).toFixed(1));
-    }
-    const timed = quizCompletes.filter((e) => typeof e.time_taken_seconds === 'number' && e.time_taken_seconds !== null);
-    if (timed.length > 0) {
-      const sumTime = timed.reduce((sum, e) => sum + (e.time_taken_seconds ?? 0), 0);
-      avgTimeSeconds = Math.round(sumTime / timed.length);
-    }
-  }
-
-  return {
-    totalVisitors,
-    totalVisits,
-    quizzesStarted,
-    quizzesCompleted,
-    completionRate: Number(completionRate.toFixed(1)),
-    avgScore,
-    avgTimeSeconds,
-  };
-}
-
-export function computeAnalyticsFunnel(events: AnalyticsEvent[], kpis: AnalyticsKpis): FunnelStage[] {
-  const visitors = kpis.totalVisitors;
-  const starts = kpis.quizzesStarted;
-  const completions = kpis.quizzesCompleted;
-
-  const stage1: FunnelStage = {
-    stage: 'Entered Webpage',
-    count: visitors,
-    rate: 100,
-    dropOff: 0,
-  };
-
-  const startRate = visitors > 0 ? (starts / visitors) * 100 : 0;
-  const startDropOff = visitors > 0 ? Math.max(0, 100 - startRate) : 0;
-  const stage2: FunnelStage = {
-    stage: 'Started Quiz',
-    count: starts,
-    rate: Number(startRate.toFixed(1)),
-    dropOff: Number(startDropOff.toFixed(1)),
-  };
-
-  const completionRate = starts > 0 ? (completions / starts) * 100 : 0;
-  const completionDropOff = starts > 0 ? Math.max(0, 100 - completionRate) : 0;
-  const stage3: FunnelStage = {
-    stage: 'Ended Quiz',
-    count: completions,
-    rate: Number(completionRate.toFixed(1)),
-    dropOff: Number(completionDropOff.toFixed(1)),
-  };
-
-  return [stage1, stage2, stage3];
-}
-
-export function computeSubjectBreakdown(events: AnalyticsEvent[]): SubjectBreakdownItem[] {
-  const subjectMap = new Map<string, {
-    subject: string;
-    starts: number;
-    completions: number;
-    themes: Map<string, { theme: string; starts: number; completions: number }>;
-  }>();
-
-  for (const event of events) {
-    if (!event.subject) continue;
-    const sub = event.subject;
-
-    if (!subjectMap.has(sub)) {
-      subjectMap.set(sub, {
-        subject: sub,
-        starts: 0,
-        completions: 0,
-        themes: new Map(),
-      });
-    }
-
-    const item = subjectMap.get(sub)!;
-    // Mock exams have no theme of their own, so they get a row per exam title.
-    const mockTitle =
-      typeof event.metadata?.mock_exam_title === 'string' ? event.metadata.mock_exam_title.trim().slice(0, 80) : '';
-    const themeKey = mockTitle ? `Mock Exam: ${mockTitle}` : event.theme || 'Theme 1';
-
-    if (!item.themes.has(themeKey)) {
-      item.themes.set(themeKey, { theme: themeKey, starts: 0, completions: 0 });
-    }
-    const themeItem = item.themes.get(themeKey)!;
-
-    if (event.event_type === 'quiz_start') {
-      item.starts++;
-      themeItem.starts++;
-    } else if (event.event_type === 'quiz_complete') {
-      item.completions++;
-      themeItem.completions++;
-    }
-  }
-
-  const breakdown: SubjectBreakdownItem[] = Array.from(subjectMap.values()).map((sub) => {
-    const compRate = sub.starts > 0 ? (sub.completions / sub.starts) * 100 : 0;
-    const themesArray = Array.from(sub.themes.values()).map((t) => ({
-      theme: t.theme,
-      starts: t.starts,
-      completions: t.completions,
-      completionRate: t.starts > 0 ? Number(((t.completions / t.starts) * 100).toFixed(1)) : 0,
-    }));
-    themesArray.sort((a, b) => b.starts - a.starts);
-
-    return {
-      subject: sub.subject,
-      starts: sub.starts,
-      completions: sub.completions,
-      completionRate: Number(compRate.toFixed(1)),
-      themes: themesArray,
-    };
-  });
-
-  breakdown.sort((a, b) => b.starts - a.starts);
-  return breakdown;
 }
 
 function normalizeBulkImportPayload(parsed: unknown): BulkImportQuestion[] {
@@ -568,14 +441,22 @@ function showToast(
   container.appendChild(toast);
 }
 
+/** Typesetting a question's maths is the costly part of drawing it, so a drawn card is kept until its data changes. */
+const rowCache = new WeakMap<Question, { label: string; html: string }>();
+
 function renderQuestionRow(question: Question, isEditing: boolean): string {
-  const letters = ['A', 'B', 'C', 'D'];
-  return `
-    <article class="question-card-item ${isEditing ? 'editing' : ''}" data-card-id="${question.id}">
+  const label = getThemeBadgeLabel(question);
+  let cached = rowCache.get(question);
+  if (!cached || cached.label !== label) {
+    const letters = ['A', 'B', 'C', 'D'];
+    cached = {
+      label,
+      html: `
+    <article class="question-card-item" data-card-id="${question.id}">
       <div class="question-meta-row">
         <div class="question-tags">
           <span class="tag-subject">${escapeHtml(question.subject)}</span>
-          <span class="tag-theme">${escapeHtml(getThemeBadgeLabel(question))}</span>
+          <span class="tag-theme">${escapeHtml(label)}</span>
         </div>
         <div class="question-card-actions">
           <button class="action-btn-sm" type="button" data-action="edit-question" data-id="${question.id}">Edit</button>
@@ -601,48 +482,81 @@ function renderQuestionRow(question: Question, isEditing: boolean): string {
         <strong>Explanation:</strong> ${renderMathText(question.explanation)}
       </div>
     </article>
-  `;
+  `,
+    };
+    rowCache.set(question, cached);
+  }
+  return isEditing ? cached.html.replace('class="question-card-item"', 'class="question-card-item editing"') : cached.html;
+}
+
+function currentFilters(state: AdminState): QuestionFilters {
+  return { subject: state.filterSubject, theme: state.filterTheme, search: state.searchTerm };
+}
+
+/** The pulsing placeholder cards shown while the first page is on its way. */
+function renderFeedSkeleton(): string {
+  return Array.from({ length: 3 }, () => '<article class="question-card-item is-skeleton" aria-hidden="true"><span class="sk sk-line sk-short"></span><span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line sk-mid"></span></article>').join('');
+}
+
+function renderFeedCards(state: AdminState): string {
+  if (state.questionsError && state.questions.length === 0) {
+    return `
+      <div class="empty-state-box feed-error" role="alert">
+        <h3>Could not load the questions</h3>
+        <p>${escapeHtml(state.questionsError)}</p>
+        <button class="action-btn-sm primary" type="button" data-action="retry-questions">Try again</button>
+      </div>
+    `;
+  }
+  if (state.questionsLoading && state.questions.length === 0) {
+    return renderFeedSkeleton();
+  }
+  if (state.questions.length === 0) {
+    return `
+      <div class="empty-state-box">
+        <h3>No matching questions</h3>
+        <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
+      </div>
+    `;
+  }
+  return state.questions.map((question) => renderQuestionRow(question, state.editingId === question.id)).join('');
+}
+
+/** Under the cards: "loading more", an error, or the end marker (nothing while more pages are waiting). */
+function renderFeedFooter(state: AdminState): string {
+  if (state.questions.length === 0) return '';
+  if (state.questionsLoadingMore) {
+    return '<div class="feed-status" role="status"><span class="feed-spinner" aria-hidden="true"></span>Loading more questions…</div>';
+  }
+  if (state.questionsError) {
+    return `<div class="feed-status feed-status-error" role="alert">Could not load more questions. <button class="action-btn-sm" type="button" data-action="retry-questions">Try again</button></div>`;
+  }
+  if (state.questionsDone) {
+    const total = state.questions.length;
+    return `<div class="feed-status feed-end">${total === 1 ? 'That is the only question' : `You have reached the end · ${total} questions`}</div>`;
+  }
+  return '';
+}
+
+function renderLibraryCount(state: AdminState): string {
+  const total = state.questionTotal === null ? '…' : String(state.questionTotal);
+  return `Showing <strong>${state.questions.length}</strong> of ${total}`;
 }
 
 function updateFeedView(state: AdminState, root: HTMLElement): void {
-  const search = state.searchTerm.trim().toLowerCase();
-  const visibleQuestions = state.questions.filter((question) => {
-    const subjectMatch = state.filterSubject === 'All' || question.subject === state.filterSubject;
-    const themeMatch = state.filterTheme === 'All' || questionTarget(question) === state.filterTheme;
-    const searchMatch =
-      !search ||
-      question.question_text.toLowerCase().includes(search) ||
-      question.explanation.toLowerCase().includes(search) ||
-      question.options.some((opt) => opt.toLowerCase().includes(search));
-    return subjectMatch && themeMatch && searchMatch;
-  });
-
   const feed = root.querySelector<HTMLElement>('#question-feed-container');
+  const footer = root.querySelector<HTMLElement>('#question-feed-footer');
   const countDisplay = root.querySelector<HTMLElement>('#library-count-display');
   const totalCountEl = root.querySelector<HTMLElement>('#stat-total-questions');
   const visibleCountEl = root.querySelector<HTMLElement>('#stat-visible-questions');
   const activeFilterEl = root.querySelector<HTMLElement>('#stat-active-filter');
 
-  if (feed) {
-    feed.innerHTML =
-      visibleQuestions.length > 0
-        ? visibleQuestions.map((q) => renderQuestionRow(q, state.editingId === q.id)).join('')
-        : `
-          <div class="empty-state-box">
-            <h3>No matching questions</h3>
-            <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
-          </div>
-        `;
-  }
-  if (countDisplay) {
-    countDisplay.innerHTML = `Showing <strong>${visibleQuestions.length}</strong> of ${state.questions.length}`;
-  }
-  if (totalCountEl) {
-    totalCountEl.textContent = String(state.questions.length);
-  }
-  if (visibleCountEl) {
-    visibleCountEl.textContent = String(visibleQuestions.length);
-  }
+  if (feed) feed.innerHTML = renderFeedCards(state);
+  if (footer) footer.innerHTML = renderFeedFooter(state);
+  if (feed) feed.setAttribute('aria-busy', String(state.questionsLoading));
+  if (countDisplay) countDisplay.innerHTML = renderLibraryCount(state);
+  if (totalCountEl) totalCountEl.textContent = state.questionCounts ? String(totalQuestions(state.questionCounts)) : '…';
+  if (visibleCountEl) visibleCountEl.textContent = state.questionTotal === null ? '…' : String(state.questionTotal);
   if (activeFilterEl) {
     activeFilterEl.textContent = `${state.filterSubject} · ${describeFilterTheme(state.filterTheme)}`;
   }
@@ -672,26 +586,6 @@ function mockDraftFromExam(exam: MockExam): MockDraft {
   };
 }
 
-function countThemeQuestions(questions: Question[], subject: Subject, theme: string): number {
-  return questions.filter(
-    (question) => !question.mock_exam_id && getSubjectAliases(subject).includes(question.subject) && question.theme === theme,
-  ).length;
-}
-
-function countAvailableQuestions(questions: Question[], subject: Subject, sourceThemes: readonly string[]): number {
-  return questions.filter(
-    (question) =>
-      !question.mock_exam_id &&
-      getSubjectAliases(subject).includes(question.subject) &&
-      question.theme !== null &&
-      sourceThemes.includes(question.theme),
-  ).length;
-}
-
-function countOwnQuestions(questions: Question[], examId: string | null): number {
-  return examId ? questions.filter((question) => question.mock_exam_id === examId).length : 0;
-}
-
 function describeMockPosition(subject: Subject, afterTheme: number): string {
   if (afterTheme <= 0) return 'Before Theme 1';
   const theme = themes[afterTheme - 1];
@@ -715,8 +609,9 @@ function describeMockAvailability(own: number, fromThemes: number, needed: numbe
 /** The live hint under the question count: how many questions the exam can draw on. */
 function getMockDraftHint(state: AdminState): { text: string; warning: boolean } {
   const { source_themes: sourceThemes, question_count: questionCount } = state.mockDraft;
-  const own = countOwnQuestions(state.questions, state.mockEditingId);
-  const fromThemes = countAvailableQuestions(state.questions, state.mockManagerSubject, sourceThemes);
+  const counts = state.questionCounts ?? [];
+  const own = countOwnQuestions(counts, state.mockEditingId);
+  const fromThemes = countAvailableQuestions(counts, getSubjectAliases(state.mockManagerSubject), sourceThemes);
   const available = own + fromThemes;
 
   if (sourceThemes.length === 0 && own === 0) {
@@ -738,8 +633,9 @@ function getMockDraftHint(state: AdminState): { text: string; warning: boolean }
 }
 
 function renderMockExamRow(state: AdminState, exam: MockExam): string {
-  const own = countOwnQuestions(state.questions, exam.id);
-  const fromThemes = countAvailableQuestions(state.questions, exam.subject, exam.source_themes);
+  const counts = state.questionCounts ?? [];
+  const own = countOwnQuestions(counts, exam.id);
+  const fromThemes = countAvailableQuestions(counts, getSubjectAliases(exam.subject), exam.source_themes);
   const availability = describeMockAvailability(own, fromThemes, exam.question_count);
   const isEditing = state.mockEditingId === exam.id;
   const id = escapeHtml(exam.id);
@@ -788,7 +684,7 @@ function renderMockManagerModal(state: AdminState): string {
   const themeBoxes = themes
     .map((theme) => {
       const custom = getCustomThemeTitle(subject, theme);
-      const count = countThemeQuestions(state.questions, subject, theme);
+      const count = countThemeQuestions(state.questionCounts ?? [], getSubjectAliases(subject), theme);
       return `
         <label class="mock-theme-option">
           <input type="checkbox" name="source_themes" value="${escapeHtml(theme)}" ${draft.source_themes.includes(theme) ? 'checked' : ''} />
@@ -816,7 +712,7 @@ function renderMockManagerModal(state: AdminState): string {
           <div class="theme-manager-subject-select">
             <label for="mock-mgr-subject">Select Subject</label>
             <select id="mock-mgr-subject">
-              ${subjects.map((s) => `<option value="${escapeHtml(s)}" ${subject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+              ${quizSubjects.map((s) => `<option value="${escapeHtml(s)}" ${subject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
             </select>
           </div>
 
@@ -874,6 +770,302 @@ function renderMockManagerModal(state: AdminState): string {
   `;
 }
 
+/** The Telemetry Command Center. A placeholder with the final layout shows until the first numbers arrive. */
+function renderTelemetryPanel(state: AdminState): string {
+  const view = state.analyticsView;
+  const kpis = view?.kpis ?? EMPTY_KPIS;
+  const funnel = view?.funnel ?? computeAnalyticsFunnel([], EMPTY_KPIS);
+  const subjectBreakdown = view?.breakdown ?? [];
+  const skeleton = !view && !state.analyticsError;
+  return `
+  <!-- Student Telemetry & Conversion Funnel Command Center -->
+  <section class="admin-telemetry-panel ${skeleton ? 'is-skeleton' : ''}" aria-label="Student Telemetry and Conversion Funnel" aria-busy="${skeleton}">
+    <div class="telemetry-panel-header">
+      <div class="telemetry-title-block">
+        <div class="telemetry-live-badge">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span>Telemetry Command Center</span>
+        </div>
+        <h2>Student Traffic &amp; Quiz Conversion Funnel</h2>
+        <p>Real-time analytics on visitors, quiz attempts, and completions.</p>
+      </div>
+      <div class="telemetry-controls">
+        <div class="telemetry-time-range-group" role="group" aria-label="Time range filter">
+          <button
+            type="button"
+            class="telemetry-range-btn ${state.analyticsTimeRange === 'all' ? 'active' : ''}"
+            data-action="switch-analytics-range"
+            data-range="all"
+            aria-pressed="${state.analyticsTimeRange === 'all'}"
+          >
+            All Time
+          </button>
+          <button
+            type="button"
+            class="telemetry-range-btn ${state.analyticsTimeRange === '7d' ? 'active' : ''}"
+            data-action="switch-analytics-range"
+            data-range="7d"
+            aria-pressed="${state.analyticsTimeRange === '7d'}"
+          >
+            Last 7 Days
+          </button>
+          <button
+            type="button"
+            class="telemetry-range-btn ${state.analyticsTimeRange === 'today' ? 'active' : ''}"
+            data-action="switch-analytics-range"
+            data-range="today"
+            aria-pressed="${state.analyticsTimeRange === 'today'}"
+          >
+            Today
+          </button>
+        </div>
+        <button
+          type="button"
+          class="telemetry-refresh-btn ${state.analyticsLoading ? 'is-loading' : ''}"
+          data-action="refresh-analytics"
+          title="Refresh analytics data"
+          ${state.analyticsLoading ? 'disabled' : ''}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span>${state.analyticsLoading ? 'Syncing...' : 'Refresh'}</span>
+        </button>
+      </div>
+    </div>
+
+    ${state.analyticsError ? `
+      <div class="telemetry-notice-box">
+        <div class="telemetry-notice-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="telemetry-notice-content">
+          <strong>Telemetry database setup pending</strong>
+          <p>Telemetry table was not reachable: <code>${escapeHtml(state.analyticsError)}</code>.</p>
+          <p class="telemetry-notice-help">To activate real-time telemetry, run migration file <code>supabase/migrations/0007_site_analytics.sql</code> in your Supabase SQL Editor.</p>
+        </div>
+      </div>
+    ` : `
+      ${state.analyticsTruncated ? `
+        <div class="telemetry-notice-box">
+          <div class="telemetry-notice-content">
+            <strong>Showing the most recent ${(ANALYTICS_PAGE_SIZE * ANALYTICS_MAX_PAGES).toLocaleString('en-US')} events</strong>
+            <p>There is more history than the dashboard loads at once, so older visits are not counted. Pick "Last 7 Days" or "Today" for exact numbers.</p>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- 4 Executive KPI Cards -->
+      <div class="telemetry-kpi-grid">
+        <!-- KPI 1: Entered Webpage -->
+        <article class="telemetry-kpi-card" id="kpi-visitors">
+          <div class="kpi-card-header">
+            <span class="kpi-title">Entered Webpage</span>
+            <span class="kpi-icon-badge kpi-visitors" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </span>
+          </div>
+          <div class="kpi-main-metric">
+            <span class="kpi-number" id="stat-telemetry-visitors">${kpis.totalVisitors}</span>
+            <span class="kpi-unit">visitors</span>
+          </div>
+          <div class="kpi-subtext">
+            <span>${kpis.totalVisits} page visits logged</span>
+            <span class="kpi-tag">Deduplicated</span>
+          </div>
+        </article>
+
+        <!-- KPI 2: Started Quiz -->
+        <article class="telemetry-kpi-card" id="kpi-starts">
+          <div class="kpi-card-header">
+            <span class="kpi-title">Started Quiz</span>
+            <span class="kpi-icon-badge kpi-starts" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </span>
+          </div>
+          <div class="kpi-main-metric">
+            <span class="kpi-number" id="stat-telemetry-starts">${kpis.quizzesStarted}</span>
+            <span class="kpi-unit">attempts</span>
+          </div>
+          <div class="kpi-subtext">
+            <span class="kpi-accent-text">${funnel[1].rate}%</span>
+            <span>of visitors started a quiz</span>
+          </div>
+        </article>
+
+        <!-- KPI 3: Ended Quiz -->
+        <article class="telemetry-kpi-card" id="kpi-completions">
+          <div class="kpi-card-header">
+            <span class="kpi-title">Ended Quiz</span>
+            <span class="kpi-icon-badge kpi-completions" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </span>
+          </div>
+          <div class="kpi-main-metric">
+            <span class="kpi-number" id="stat-telemetry-completions">${kpis.quizzesCompleted}</span>
+            <span class="kpi-unit">completed</span>
+          </div>
+          <div class="kpi-subtext">
+            <span class="kpi-accent-text ${kpis.completionRate >= 70 ? 'positive' : ''}">${kpis.completionRate}%</span>
+            <span>completion rate</span>
+          </div>
+        </article>
+
+        <!-- KPI 4: Quality & Performance -->
+        <article class="telemetry-kpi-card" id="kpi-performance">
+          <div class="kpi-card-header">
+            <span class="kpi-title">Avg Performance</span>
+            <span class="kpi-icon-badge kpi-performance" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </span>
+          </div>
+          <div class="kpi-main-metric">
+            <span class="kpi-number">${kpis.avgScore !== null ? `${kpis.avgScore}` : '--'}</span>
+            <span class="kpi-unit">${kpis.avgScore !== null ? '/ 25 avg' : 'no data'}</span>
+          </div>
+          <div class="kpi-subtext">
+            <span>${kpis.avgTimeSeconds !== null ? `${Math.floor(kpis.avgTimeSeconds / 60)}m ${kpis.avgTimeSeconds % 60}s avg duration` : 'Awaiting completed quizzes'}</span>
+          </div>
+        </article>
+      </div>
+
+      <!-- Visual 3-Stage Conversion Funnel -->
+      <div class="telemetry-funnel-card">
+        <div class="funnel-card-header">
+          <div>
+            <h3 class="funnel-title">User Journey &amp; Conversion Funnel</h3>
+            <p class="funnel-subtitle">Drop-off progression from site landing to quiz completion</p>
+          </div>
+          <span class="funnel-summary-badge">
+            Overall Conversion: <strong>${kpis.totalVisitors > 0 ? ((kpis.quizzesCompleted / kpis.totalVisitors) * 100).toFixed(1) : '0.0'}%</strong>
+          </span>
+        </div>
+
+        <div class="telemetry-funnel-stages">
+          <!-- Stage 1 -->
+          <div class="funnel-stage-item stage-visitors">
+            <div class="funnel-stage-head">
+              <span class="funnel-step-num">Stage 1</span>
+              <span class="funnel-stage-name">Entered Webpage</span>
+              <span class="funnel-stage-count">${funnel[0].count}</span>
+            </div>
+            <div class="funnel-bar-track">
+              <div class="funnel-bar-fill stage-1-fill" style="width: 100%;"></div>
+            </div>
+            <div class="funnel-stage-metrics">
+              <span class="funnel-rate-tag">100% of traffic</span>
+              <span class="funnel-dropoff-tag zero">Baseline</span>
+            </div>
+          </div>
+
+          <div class="funnel-stage-arrow" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </div>
+
+          <!-- Stage 2 -->
+          <div class="funnel-stage-item stage-starts">
+            <div class="funnel-stage-head">
+              <span class="funnel-step-num">Stage 2</span>
+              <span class="funnel-stage-name">Started Quiz</span>
+              <span class="funnel-stage-count">${funnel[1].count}</span>
+            </div>
+            <div class="funnel-bar-track">
+              <div class="funnel-bar-fill stage-2-fill" style="width: ${Math.min(100, Math.max(funnel[1].count > 0 ? 8 : 0, funnel[1].rate))}%;"></div>
+            </div>
+            <div class="funnel-stage-metrics">
+              <span class="funnel-rate-tag">${funnel[1].rate}% started</span>
+              <span class="funnel-dropoff-tag ${funnel[1].dropOff > 50 ? 'high' : ''}">${funnel[1].dropOff}% drop-off</span>
+            </div>
+          </div>
+
+          <div class="funnel-stage-arrow" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </div>
+
+          <!-- Stage 3 -->
+          <div class="funnel-stage-item stage-completions">
+            <div class="funnel-stage-head">
+              <span class="funnel-step-num">Stage 3</span>
+              <span class="funnel-stage-name">Ended Quiz</span>
+              <span class="funnel-stage-count">${funnel[2].count}</span>
+            </div>
+            <div class="funnel-bar-track">
+              <div class="funnel-bar-fill stage-3-fill" style="width: ${Math.min(100, Math.max(funnel[2].count > 0 ? 8 : 0, funnel[2].rate))}%;"></div>
+            </div>
+            <div class="funnel-stage-metrics">
+              <span class="funnel-rate-tag">${funnel[2].rate}% finished</span>
+              <span class="funnel-dropoff-tag ${funnel[2].dropOff > 50 ? 'high' : ''}">${funnel[2].dropOff}% drop-off</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subject Breakdown Toggle & Table -->
+      <div class="telemetry-breakdown-card">
+        <div class="telemetry-breakdown-header">
+          <div>
+            <h4 class="breakdown-title">Subject &amp; Curriculum Engagement</h4>
+            <p class="breakdown-subtitle">Breakdown of quiz starts and completions per academic subject</p>
+          </div>
+          <button
+            type="button"
+            class="button secondary telemetry-breakdown-toggle"
+            data-action="toggle-subject-breakdown"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <span>${state.showSubjectBreakdown ? 'Hide Breakdown' : `View Subject Breakdown (${subjectBreakdown.length})`}</span>
+          </button>
+        </div>
+
+        ${state.showSubjectBreakdown ? `
+          <div class="telemetry-breakdown-body">
+            ${subjectBreakdown.length > 0 ? `
+              <div class="telemetry-table-wrapper">
+                <table class="telemetry-table">
+                  <thead>
+                    <tr>
+                      <th>Subject</th>
+                      <th class="num-col">Started</th>
+                      <th class="num-col">Completed</th>
+                      <th class="num-col">Completion Rate</th>
+                      <th>Top Theme</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${subjectBreakdown.map((row) => `
+                      <tr>
+                        <td class="subject-col">
+                          <span class="subject-name-cell">${escapeHtml(row.subject)}</span>
+                        </td>
+                        <td class="num-col"><strong>${row.starts}</strong></td>
+                        <td class="num-col"><strong>${row.completions}</strong></td>
+                        <td class="num-col">
+                          <span class="badge ${row.completionRate >= 70 ? 'badge-success' : 'badge-neutral'}">
+                            ${row.completionRate}%
+                          </span>
+                        </td>
+                        <td class="theme-col">
+                          ${row.themes.length > 0 ? `
+                            <span class="theme-pill">${escapeHtml(row.themes[0].theme)} (${row.themes[0].starts} starts)</span>
+                          ` : '<span class="subtle">None</span>'}
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            ` : `
+              <div class="telemetry-empty-breakdown">
+                <p>No subject activity recorded yet in this time frame.</p>
+              </div>
+            `}
+          </div>
+        ` : ''}
+      </div>
+    `}
+  </section>
+  `;
+}
+
+
 export function bootAdmin(root: HTMLElement): void {
   const state: AdminState = {
     phase: 'loading',
@@ -881,6 +1073,12 @@ export function bootAdmin(root: HTMLElement): void {
     error: null,
     busy: false,
     questions: [],
+    questionTotal: null,
+    questionsLoading: false,
+    questionsLoadingMore: false,
+    questionsDone: false,
+    questionsError: null,
+    questionCounts: null,
     filterSubject: 'All',
     filterTheme: 'All',
     searchTerm: '',
@@ -893,7 +1091,7 @@ export function bootAdmin(root: HTMLElement): void {
     mockEditingId: null,
     mockDraft: defaultMockDraft(),
     mockSaving: false,
-    analyticsEvents: [],
+    analyticsView: null,
     analyticsLoading: false,
     analyticsError: null,
     analyticsTruncated: false,
@@ -980,23 +1178,8 @@ export function bootAdmin(root: HTMLElement): void {
       state.mockEditingId = null;
     }
 
-    const search = state.searchTerm.trim().toLowerCase();
-    const visibleQuestions = state.questions.filter((question) => {
-      const subjectMatch = state.filterSubject === 'All' || question.subject === state.filterSubject;
-      const themeMatch = state.filterTheme === 'All' || questionTarget(question) === state.filterTheme;
-      const searchMatch =
-        !search ||
-        question.question_text.toLowerCase().includes(search) ||
-        question.explanation.toLowerCase().includes(search) ||
-        question.options.some((opt) => opt.toLowerCase().includes(search));
-      return subjectMatch && themeMatch && searchMatch;
-    });
-    const totalQuestions = state.questions.length;
-    const visibleCount = visibleQuestions.length;
-
-    const kpis = computeAnalyticsKpis(state.analyticsEvents);
-    const funnel = computeAnalyticsFunnel(state.analyticsEvents, kpis);
-    const subjectBreakdown = computeSubjectBreakdown(state.analyticsEvents);
+    const totalCount = state.questionCounts ? String(totalQuestions(state.questionCounts)) : '…';
+    const visibleCount = state.questionTotal === null ? '…' : String(state.questionTotal);
 
     root.innerHTML = `
       <section class="admin-shell">
@@ -1030,296 +1213,13 @@ export function bootAdmin(root: HTMLElement): void {
           </div>
         </header>
 
-        <!-- Student Telemetry & Conversion Funnel Command Center -->
-        <section class="admin-telemetry-panel" aria-label="Student Telemetry and Conversion Funnel">
-          <div class="telemetry-panel-header">
-            <div class="telemetry-title-block">
-              <div class="telemetry-live-badge">
-                <span class="live-dot" aria-hidden="true"></span>
-                <span>Telemetry Command Center</span>
-              </div>
-              <h2>Student Traffic &amp; Quiz Conversion Funnel</h2>
-              <p>Real-time analytics on visitors, quiz attempts, and completions.</p>
-            </div>
-            <div class="telemetry-controls">
-              <div class="telemetry-time-range-group" role="group" aria-label="Time range filter">
-                <button
-                  type="button"
-                  class="telemetry-range-btn ${state.analyticsTimeRange === 'all' ? 'active' : ''}"
-                  data-action="switch-analytics-range"
-                  data-range="all"
-                  aria-pressed="${state.analyticsTimeRange === 'all'}"
-                >
-                  All Time
-                </button>
-                <button
-                  type="button"
-                  class="telemetry-range-btn ${state.analyticsTimeRange === '7d' ? 'active' : ''}"
-                  data-action="switch-analytics-range"
-                  data-range="7d"
-                  aria-pressed="${state.analyticsTimeRange === '7d'}"
-                >
-                  Last 7 Days
-                </button>
-                <button
-                  type="button"
-                  class="telemetry-range-btn ${state.analyticsTimeRange === 'today' ? 'active' : ''}"
-                  data-action="switch-analytics-range"
-                  data-range="today"
-                  aria-pressed="${state.analyticsTimeRange === 'today'}"
-                >
-                  Today
-                </button>
-              </div>
-              <button
-                type="button"
-                class="telemetry-refresh-btn ${state.analyticsLoading ? 'is-loading' : ''}"
-                data-action="refresh-analytics"
-                title="Refresh analytics data"
-                ${state.analyticsLoading ? 'disabled' : ''}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                <span>${state.analyticsLoading ? 'Syncing...' : 'Refresh'}</span>
-              </button>
-            </div>
-          </div>
-
-          ${state.analyticsError ? `
-            <div class="telemetry-notice-box">
-              <div class="telemetry-notice-icon">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              </div>
-              <div class="telemetry-notice-content">
-                <strong>Telemetry database setup pending</strong>
-                <p>Telemetry table was not reachable: <code>${escapeHtml(state.analyticsError)}</code>.</p>
-                <p class="telemetry-notice-help">To activate real-time telemetry, run migration file <code>supabase/migrations/0007_site_analytics.sql</code> in your Supabase SQL Editor.</p>
-              </div>
-            </div>
-          ` : `
-            ${state.analyticsTruncated ? `
-              <div class="telemetry-notice-box">
-                <div class="telemetry-notice-content">
-                  <strong>Showing the most recent ${(ANALYTICS_PAGE_SIZE * ANALYTICS_MAX_PAGES).toLocaleString('en-US')} events</strong>
-                  <p>There is more history than the dashboard loads at once, so older visits are not counted. Pick "Last 7 Days" or "Today" for exact numbers.</p>
-                </div>
-              </div>
-            ` : ''}
-
-            <!-- 4 Executive KPI Cards -->
-            <div class="telemetry-kpi-grid">
-              <!-- KPI 1: Entered Webpage -->
-              <article class="telemetry-kpi-card" id="kpi-visitors">
-                <div class="kpi-card-header">
-                  <span class="kpi-title">Entered Webpage</span>
-                  <span class="kpi-icon-badge kpi-visitors" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                  </span>
-                </div>
-                <div class="kpi-main-metric">
-                  <span class="kpi-number" id="stat-telemetry-visitors">${kpis.totalVisitors}</span>
-                  <span class="kpi-unit">visitors</span>
-                </div>
-                <div class="kpi-subtext">
-                  <span>${kpis.totalVisits} page visits logged</span>
-                  <span class="kpi-tag">Deduplicated</span>
-                </div>
-              </article>
-
-              <!-- KPI 2: Started Quiz -->
-              <article class="telemetry-kpi-card" id="kpi-starts">
-                <div class="kpi-card-header">
-                  <span class="kpi-title">Started Quiz</span>
-                  <span class="kpi-icon-badge kpi-starts" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  </span>
-                </div>
-                <div class="kpi-main-metric">
-                  <span class="kpi-number" id="stat-telemetry-starts">${kpis.quizzesStarted}</span>
-                  <span class="kpi-unit">attempts</span>
-                </div>
-                <div class="kpi-subtext">
-                  <span class="kpi-accent-text">${funnel[1].rate}%</span>
-                  <span>of visitors started a quiz</span>
-                </div>
-              </article>
-
-              <!-- KPI 3: Ended Quiz -->
-              <article class="telemetry-kpi-card" id="kpi-completions">
-                <div class="kpi-card-header">
-                  <span class="kpi-title">Ended Quiz</span>
-                  <span class="kpi-icon-badge kpi-completions" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                  </span>
-                </div>
-                <div class="kpi-main-metric">
-                  <span class="kpi-number" id="stat-telemetry-completions">${kpis.quizzesCompleted}</span>
-                  <span class="kpi-unit">completed</span>
-                </div>
-                <div class="kpi-subtext">
-                  <span class="kpi-accent-text ${kpis.completionRate >= 70 ? 'positive' : ''}">${kpis.completionRate}%</span>
-                  <span>completion rate</span>
-                </div>
-              </article>
-
-              <!-- KPI 4: Quality & Performance -->
-              <article class="telemetry-kpi-card" id="kpi-performance">
-                <div class="kpi-card-header">
-                  <span class="kpi-title">Avg Performance</span>
-                  <span class="kpi-icon-badge kpi-performance" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  </span>
-                </div>
-                <div class="kpi-main-metric">
-                  <span class="kpi-number">${kpis.avgScore !== null ? `${kpis.avgScore}` : '--'}</span>
-                  <span class="kpi-unit">${kpis.avgScore !== null ? '/ 25 avg' : 'no data'}</span>
-                </div>
-                <div class="kpi-subtext">
-                  <span>${kpis.avgTimeSeconds !== null ? `${Math.floor(kpis.avgTimeSeconds / 60)}m ${kpis.avgTimeSeconds % 60}s avg duration` : 'Awaiting completed quizzes'}</span>
-                </div>
-              </article>
-            </div>
-
-            <!-- Visual 3-Stage Conversion Funnel -->
-            <div class="telemetry-funnel-card">
-              <div class="funnel-card-header">
-                <div>
-                  <h3 class="funnel-title">User Journey &amp; Conversion Funnel</h3>
-                  <p class="funnel-subtitle">Drop-off progression from site landing to quiz completion</p>
-                </div>
-                <span class="funnel-summary-badge">
-                  Overall Conversion: <strong>${kpis.totalVisitors > 0 ? ((kpis.quizzesCompleted / kpis.totalVisitors) * 100).toFixed(1) : '0.0'}%</strong>
-                </span>
-              </div>
-
-              <div class="telemetry-funnel-stages">
-                <!-- Stage 1 -->
-                <div class="funnel-stage-item stage-visitors">
-                  <div class="funnel-stage-head">
-                    <span class="funnel-step-num">Stage 1</span>
-                    <span class="funnel-stage-name">Entered Webpage</span>
-                    <span class="funnel-stage-count">${funnel[0].count}</span>
-                  </div>
-                  <div class="funnel-bar-track">
-                    <div class="funnel-bar-fill stage-1-fill" style="width: 100%;"></div>
-                  </div>
-                  <div class="funnel-stage-metrics">
-                    <span class="funnel-rate-tag">100% of traffic</span>
-                    <span class="funnel-dropoff-tag zero">Baseline</span>
-                  </div>
-                </div>
-
-                <div class="funnel-stage-arrow" aria-hidden="true">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                </div>
-
-                <!-- Stage 2 -->
-                <div class="funnel-stage-item stage-starts">
-                  <div class="funnel-stage-head">
-                    <span class="funnel-step-num">Stage 2</span>
-                    <span class="funnel-stage-name">Started Quiz</span>
-                    <span class="funnel-stage-count">${funnel[1].count}</span>
-                  </div>
-                  <div class="funnel-bar-track">
-                    <div class="funnel-bar-fill stage-2-fill" style="width: ${Math.min(100, Math.max(funnel[1].count > 0 ? 8 : 0, funnel[1].rate))}%;"></div>
-                  </div>
-                  <div class="funnel-stage-metrics">
-                    <span class="funnel-rate-tag">${funnel[1].rate}% started</span>
-                    <span class="funnel-dropoff-tag ${funnel[1].dropOff > 50 ? 'high' : ''}">${funnel[1].dropOff}% drop-off</span>
-                  </div>
-                </div>
-
-                <div class="funnel-stage-arrow" aria-hidden="true">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                </div>
-
-                <!-- Stage 3 -->
-                <div class="funnel-stage-item stage-completions">
-                  <div class="funnel-stage-head">
-                    <span class="funnel-step-num">Stage 3</span>
-                    <span class="funnel-stage-name">Ended Quiz</span>
-                    <span class="funnel-stage-count">${funnel[2].count}</span>
-                  </div>
-                  <div class="funnel-bar-track">
-                    <div class="funnel-bar-fill stage-3-fill" style="width: ${Math.min(100, Math.max(funnel[2].count > 0 ? 8 : 0, funnel[2].rate))}%;"></div>
-                  </div>
-                  <div class="funnel-stage-metrics">
-                    <span class="funnel-rate-tag">${funnel[2].rate}% finished</span>
-                    <span class="funnel-dropoff-tag ${funnel[2].dropOff > 50 ? 'high' : ''}">${funnel[2].dropOff}% drop-off</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Subject Breakdown Toggle & Table -->
-            <div class="telemetry-breakdown-card">
-              <div class="telemetry-breakdown-header">
-                <div>
-                  <h4 class="breakdown-title">Subject &amp; Curriculum Engagement</h4>
-                  <p class="breakdown-subtitle">Breakdown of quiz starts and completions per academic subject</p>
-                </div>
-                <button
-                  type="button"
-                  class="button secondary telemetry-breakdown-toggle"
-                  data-action="toggle-subject-breakdown"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                  <span>${state.showSubjectBreakdown ? 'Hide Breakdown' : `View Subject Breakdown (${subjectBreakdown.length})`}</span>
-                </button>
-              </div>
-
-              ${state.showSubjectBreakdown ? `
-                <div class="telemetry-breakdown-body">
-                  ${subjectBreakdown.length > 0 ? `
-                    <div class="telemetry-table-wrapper">
-                      <table class="telemetry-table">
-                        <thead>
-                          <tr>
-                            <th>Subject</th>
-                            <th class="num-col">Started</th>
-                            <th class="num-col">Completed</th>
-                            <th class="num-col">Completion Rate</th>
-                            <th>Top Theme</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          ${subjectBreakdown.map((row) => `
-                            <tr>
-                              <td class="subject-col">
-                                <span class="subject-name-cell">${escapeHtml(row.subject)}</span>
-                              </td>
-                              <td class="num-col"><strong>${row.starts}</strong></td>
-                              <td class="num-col"><strong>${row.completions}</strong></td>
-                              <td class="num-col">
-                                <span class="badge ${row.completionRate >= 70 ? 'badge-success' : 'badge-neutral'}">
-                                  ${row.completionRate}%
-                                </span>
-                              </td>
-                              <td class="theme-col">
-                                ${row.themes.length > 0 ? `
-                                  <span class="theme-pill">${escapeHtml(row.themes[0].theme)} (${row.themes[0].starts} starts)</span>
-                                ` : '<span class="subtle">None</span>'}
-                              </td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    </div>
-                  ` : `
-                    <div class="telemetry-empty-breakdown">
-                      <p>No subject activity recorded yet in this time frame.</p>
-                    </div>
-                  `}
-                </div>
-              ` : ''}
-            </div>
-          `}
-        </section>
+        ${renderTelemetryPanel(state)}
 
         <section class="admin-stats">
           <article class="admin-stat-card">
             <div class="stat-content">
               <span class="stat-label">Total Questions</span>
-              <span class="stat-value" id="stat-total-questions">${totalQuestions}</span>
+              <span class="stat-value" id="stat-total-questions">${totalCount}</span>
             </div>
             <div class="stat-icon" aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
@@ -1392,7 +1292,7 @@ export function bootAdmin(root: HTMLElement): void {
                         <label>
                           <span>Subject</span>
                           <select name="subject" id="question-subject" required>
-                            ${subjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
+                            ${quizSubjects.map((subject) => `<option value="${escapeHtml(subject)}">${escapeHtml(subject)}</option>`).join('')}
                           </select>
                         </label>
                         <label>
@@ -1518,21 +1418,11 @@ export function bootAdmin(root: HTMLElement): void {
                   ${getFilterThemeOptions(state.filterSubject, state.filterTheme)}
                 </select>
               </div>
-              <div class="library-count" id="library-count-display">
-                Showing <strong>${visibleCount}</strong> of ${totalQuestions}
-              </div>
+              <div class="library-count" id="library-count-display">${renderLibraryCount(state)}</div>
             </div>
 
-            <div class="question-feed" id="question-feed-container">
-              ${visibleQuestions.length > 0
-                ? visibleQuestions.map((question) => renderQuestionRow(question, state.editingId === question.id)).join('')
-                : `
-                  <div class="empty-state-box">
-                    <h3>No matching questions</h3>
-                    <p>Try modifying your search or filters, or add a new question using the form on the left.</p>
-                  </div>
-                `}
-            </div>
+            <div class="question-feed" id="question-feed-container" aria-busy="${state.questionsLoading}">${renderFeedCards(state)}</div>
+            <div class="question-feed-footer" id="question-feed-footer">${renderFeedFooter(state)}</div>
           </main>
         </section>
       </section>
@@ -1551,7 +1441,7 @@ export function bootAdmin(root: HTMLElement): void {
                 <div class="theme-manager-subject-select">
                   <label for="theme-mgr-subject">Select Subject</label>
                   <select id="theme-mgr-subject" name="manager_subject">
-                    ${subjects.map((s) => `<option value="${escapeHtml(s)}" ${state.themeManagerSubject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                    ${quizSubjects.map((s) => `<option value="${escapeHtml(s)}" ${state.themeManagerSubject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
                   </select>
                 </div>
 
@@ -1612,117 +1502,308 @@ export function bootAdmin(root: HTMLElement): void {
     }
 
     restoreMockView(mockView);
+    armFeedObserver();
   };
 
-  const loadQuestions = async (): Promise<void> => {
-    const columns = 'id, subject, theme, question_text, options, correct_index, explanation, created_at';
-    const withMock = await supabase
-      .from('questions')
-      .select(`${columns}, mock_exam_id`)
-      .order('created_at', { ascending: false });
+  // ---- Question library: one page at a time, the next one fetched as the admin scrolls -------------------------
+  /** Bumped whenever the filters change, so an answer to an older request is thrown away. */
+  let feedToken = 0;
+  let searchTimer = 0;
+  /** The search the library on screen was read with, so typing that does not change it never re-reads. */
+  let appliedSearch = '';
+  let feedAbort: AbortController | null = null;
+  let feedObserver: IntersectionObserver | null = null;
+  /** Before migration 0009 the questions table has no mock_exam_id column: stop asking for it once we know. */
+  let hasMockColumn = true;
 
-    // Before migration 0009 there is no mock_exam_id column: load without it so the dashboard still works.
-    const result =
-      withMock.error && /mock_exam_id/i.test(withMock.error.message)
-        ? await supabase.from('questions').select(columns).order('created_at', { ascending: false })
-        : withMock;
+  interface QuestionPage {
+    rows: Question[];
+    count: number | null;
+  }
 
-    if (result.error) {
-      throw result.error;
+  const readQuestionPage = async (cursor: ReturnType<typeof cursorOf> | null, first: boolean, signal: AbortSignal): Promise<QuestionPage> => {
+    const filters = currentFilters(state);
+    const run = async (withMock: boolean): Promise<QuestionPage> => {
+      let query = supabase
+        .from('questions')
+        .select(withMock ? `${QUESTION_COLUMNS}, mock_exam_id` : QUESTION_COLUMNS, first ? { count: 'exact' } : undefined)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(QUESTION_PAGE_SIZE)
+        .abortSignal(signal);
+      if (filters.subject !== 'All') query = query.eq('subject', filters.subject);
+      if (filters.theme.startsWith(MOCK_TARGET_PREFIX)) {
+        // A mock exam's own questions: none can exist before the column does.
+        query = withMock ? query.eq('mock_exam_id', filters.theme.slice(MOCK_TARGET_PREFIX.length)) : query.is('id', null);
+      } else if (filters.theme !== 'All') {
+        query = query.eq('theme', filters.theme);
+      }
+      const search = buildSearchFilter(filters.search);
+      if (search) query = query.or(search);
+      if (cursor) query = query.or(buildKeysetFilter(cursor));
+      const { data, error, count } = await query;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as Question[], count: typeof count === 'number' ? count : null };
+    };
+    try {
+      return await run(hasMockColumn);
+    } catch (error) {
+      if (hasMockColumn && /mock_exam_id/i.test((error as { message?: string })?.message ?? '')) {
+        hasMockColumn = false;
+        return run(false);
+      }
+      throw error;
     }
+  };
 
-    state.questions = (result.data ?? []) as Question[];
+  /**
+   * Watches the strip under the last card: when it nears the screen, the next page is fetched. The strip itself is
+   * never replaced (only its contents are), and re-arming after every page makes the browser re-check at once, so a
+   * tall screen keeps loading until the strip is far enough away.
+   */
+  const armFeedObserver = (): void => {
+    feedObserver?.disconnect();
+    feedObserver = null;
+    const strip = root.querySelector<HTMLElement>('#question-feed-footer');
+    if (!strip || typeof IntersectionObserver === 'undefined') return;
+    feedObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadQuestionsPage('more');
+      },
+      { rootMargin: '1200px 0px' }, // start well before the end, so scrolling never waits
+    );
+    feedObserver.observe(strip);
+  };
+
+  const updateFeedFooter = (): void => {
+    const footer = root.querySelector<HTMLElement>('#question-feed-footer');
+    const countDisplay = root.querySelector<HTMLElement>('#library-count-display');
+    if (footer) footer.innerHTML = renderFeedFooter(state);
+    if (countDisplay) countDisplay.innerHTML = renderLibraryCount(state);
+  };
+
+  const loadQuestionsPage = async (mode: 'reset' | 'more', manual = false): Promise<void> => {
+    if (mode === 'more' && (state.questionsLoading || state.questionsLoadingMore || state.questionsDone || state.questions.length === 0)) {
+      return;
+    }
+    // After a failed page, only the admin's own "Try again" asks again (never an endless automatic retry).
+    if (mode === 'more' && state.questionsError && !manual) return;
+    if (mode === 'reset') {
+      feedAbort?.abort();
+      feedToken += 1;
+      appliedSearch = normalizeSearchTerm(state.searchTerm);
+      state.questions = [];
+      state.questionTotal = null;
+      state.questionsDone = false;
+      state.questionsLoading = true;
+      state.questionsLoadingMore = false;
+    } else {
+      state.questionsLoadingMore = true;
+    }
+    state.questionsError = null;
+    const token = feedToken;
+    const controller = new AbortController();
+    feedAbort = controller;
+    if (mode === 'reset') updateFeedView(state, root);
+    else updateFeedFooter();
+
+    try {
+      const cursor = mode === 'more' ? cursorOf(state.questions[state.questions.length - 1]) : null;
+      const page = await readQuestionPage(cursor, mode === 'reset', controller.signal);
+      if (token !== feedToken) return;
+      const known = new Set(state.questions.map((question) => question.id));
+      const fresh = page.rows.filter((question) => !known.has(question.id));
+      state.questionsDone = page.rows.length < QUESTION_PAGE_SIZE;
+      if (page.count !== null) state.questionTotal = page.count;
+      state.questions = mode === 'reset' ? fresh : [...state.questions, ...fresh];
+      state.questionsLoading = false;
+      state.questionsLoadingMore = false;
+      if (mode === 'reset') {
+        updateFeedView(state, root);
+      } else {
+        // Only the new cards are added: the ones already on screen are not drawn again.
+        root.querySelector<HTMLElement>('#question-feed-container')?.insertAdjacentHTML('beforeend', fresh.map((question) => renderQuestionRow(question, false)).join(''));
+        updateFeedFooter();
+      }
+    } catch (error) {
+      if (token !== feedToken || (error as { name?: string })?.name === 'AbortError') return;
+      state.questionsError = error instanceof Error ? error.message : (error as { message?: string })?.message ?? 'Could not load the questions.';
+      state.questionsLoading = false;
+      state.questionsLoadingMore = false;
+      updateFeedView(state, root);
+    } finally {
+      if (token === feedToken) armFeedObserver();
+    }
+  };
+
+  const reloadFeed = (): Promise<void> => loadQuestionsPage('reset');
+
+  const updateCounters = (): void => {
+    const total = root.querySelector<HTMLElement>('#stat-total-questions');
+    if (total) total.textContent = state.questionCounts ? String(totalQuestions(state.questionCounts)) : '…';
+    const visible = root.querySelector<HTMLElement>('#stat-visible-questions');
+    if (visible) visible.textContent = state.questionTotal === null ? '…' : String(state.questionTotal);
+    const countDisplay = root.querySelector<HTMLElement>('#library-count-display');
+    if (countDisplay) countDisplay.innerHTML = renderLibraryCount(state);
+  };
+
+  const isMissingFunction = (error: { code?: string; message?: string } | null): boolean =>
+    Boolean(error && (error.code === 'PGRST202' || error.code === '42883' || /could not find the function/i.test(error.message ?? '')));
+
+  /** Totals per subject / theme / mock exam: one small answer from the database (a slower way if it is not installed). */
+  const loadQuestionCounts = async (): Promise<void> => {
+    try {
+      const { data, error } = await supabase.rpc('admin_question_counts');
+      if (!error) {
+        state.questionCounts = parseQuestionCounts(data);
+      } else if (isMissingFunction(error)) {
+        const rows: QuestionCountRow[] = [];
+        const tally = new Map<string, QuestionCountRow>();
+        for (let offset = 0; ; offset += 1000) {
+          const result = await supabase
+            .from('questions')
+            .select(hasMockColumn ? 'subject, theme, mock_exam_id' : 'subject, theme')
+            .order('id')
+            .range(offset, offset + 999);
+          if (result.error) throw result.error;
+          const batch = (result.data ?? []) as unknown as Array<{ subject: string; theme: string | null; mock_exam_id?: string | null }>;
+          for (const row of batch) {
+            const key = `${row.subject}|${row.theme ?? ''}|${row.mock_exam_id ?? ''}`;
+            const entry = tally.get(key) ?? { subject: row.subject, theme: row.theme ?? null, mock_exam_id: row.mock_exam_id ?? null, count: 0 };
+            entry.count += 1;
+            tally.set(key, entry);
+          }
+          if (batch.length < 1000) break;
+        }
+        rows.push(...tally.values());
+        state.questionCounts = rows;
+      } else {
+        state.questionCounts ??= [];
+      }
+    } catch {
+      state.questionCounts ??= [];
+    }
+    updateCounters();
+  };
+
+  // ---- Telemetry: the database adds the numbers up; the browser only draws them -------------------------------
+  let analyticsToken = 0;
+
+  interface CachedAnalytics {
+    view: AnalyticsView;
+  }
+
+  const readCachedAnalytics = (range: AnalyticsTimeRange): AnalyticsView | null => readSession<CachedAnalytics>(`admin-analytics:${range}`)?.view ?? null;
+
+  /** Replaces just the telemetry panel, so a refresh never redraws (or resets) the rest of the dashboard. */
+  const updateTelemetry = (): void => {
+    const current = root.querySelector<HTMLElement>('.admin-telemetry-panel');
+    if (!current) return;
+    const holder = document.createElement('div');
+    holder.innerHTML = renderTelemetryPanel(state);
+    const next = holder.querySelector<HTMLElement>('.admin-telemetry-panel');
+    if (next) current.replaceWith(next);
+  };
+
+  /** The slow way, for a database without migration 0015: read every event (page 1 first, the rest in parallel). */
+  const readEventsSlowly = async (since: string | null): Promise<{ events: AnalyticsEvent[]; truncated: boolean }> => {
+    const readPage = async (page: number, withCount: boolean) => {
+      let query = supabase
+        .from('site_analytics')
+        .select(
+          'id, event_type, session_id, subject, theme, score, total_questions, time_taken_seconds, created_at, mock_exam_title:metadata->>mock_exam_title',
+          withCount ? { count: 'exact' } : undefined,
+        )
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(page * ANALYTICS_PAGE_SIZE, (page + 1) * ANALYTICS_PAGE_SIZE - 1);
+      if (since) query = query.gte('created_at', since);
+      const { data, error, count } = await query;
+      if (error) throw error;
+      const rows = ((data ?? []) as unknown as Array<AnalyticsEvent & { mock_exam_title?: string | null }>).map((row) => {
+        const { mock_exam_title: mockTitle, ...event } = row;
+        const title = mockTitle ?? (typeof event.metadata?.mock_exam_title === 'string' ? event.metadata.mock_exam_title : '');
+        return { ...event, metadata: title ? { mock_exam_title: title } : {} } as AnalyticsEvent;
+      });
+      return { rows, count };
+    };
+    const first = await readPage(0, true);
+    const events = [...first.rows];
+    if (first.rows.length < ANALYTICS_PAGE_SIZE) return { events, truncated: false };
+    const pages = Math.min(ANALYTICS_MAX_PAGES, Math.ceil((first.count ?? ANALYTICS_PAGE_SIZE * 2) / ANALYTICS_PAGE_SIZE));
+    const rest = await Promise.all(Array.from({ length: Math.max(0, pages - 1) }, (_, index) => readPage(index + 1, false)));
+    for (const part of rest) events.push(...part.rows);
+    return { events, truncated: (first.count ?? 0) > ANALYTICS_PAGE_SIZE * ANALYTICS_MAX_PAGES };
   };
 
   const loadAnalytics = async (): Promise<void> => {
+    const token = (analyticsToken += 1);
+    const range = state.analyticsTimeRange;
     state.analyticsLoading = true;
     state.analyticsError = null;
     try {
-      const now = new Date();
-      let since: string | null = null;
-      if (state.analyticsTimeRange === 'today') {
-        const todayStart = new Date(now);
-        todayStart.setHours(0, 0, 0, 0);
-        since = todayStart.toISOString();
-      } else if (state.analyticsTimeRange === '7d') {
-        since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      }
-
-      // Supabase returns at most 1000 rows per request. A single unpaged query silently dropped the OLDEST
-      // events once the table grew past that, so page visits vanished and "visitors" kept shrinking.
-      // Read every page instead (newest first; id breaks ties so pages never overlap or skip rows).
-      const events: AnalyticsEvent[] = [];
-      let failure: string | null = null;
-      let truncated = false;
-      for (let page = 0; ; page += 1) {
-        if (page >= ANALYTICS_MAX_PAGES) {
-          truncated = true;
-          break;
-        }
-        let query = supabase
-          .from('site_analytics')
-          .select('id, event_type, session_id, subject, theme, score, total_questions, time_taken_seconds, metadata, created_at')
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: false })
-          .range(page * ANALYTICS_PAGE_SIZE, (page + 1) * ANALYTICS_PAGE_SIZE - 1);
-        if (since) {
-          query = query.gte('created_at', since);
-        }
-        const { data, error } = await query;
-        if (error) {
-          failure = error.message;
-          break;
-        }
-        const rows = (data ?? []) as AnalyticsEvent[];
-        events.push(...rows);
-        if (rows.length < ANALYTICS_PAGE_SIZE) {
-          break;
+      const since = analyticsSince(range, new Date());
+      const { data, error } = await supabase.rpc('admin_analytics_summary', { p_since: since });
+      if (token !== analyticsToken) return;
+      let view: AnalyticsView | null = null;
+      if (!error) {
+        const summary = parseAnalyticsSummary(data);
+        if (summary) {
+          view = viewFromSummary(summary);
+          state.analyticsTruncated = false;
         }
       }
-
-      if (failure) {
-        state.analyticsError = failure;
-        state.analyticsEvents = [];
-        state.analyticsTruncated = false;
-      } else {
-        state.analyticsEvents = events;
+      if (!view) {
+        if (error && !isMissingFunction(error)) throw error;
+        const { events, truncated } = await readEventsSlowly(since);
+        if (token !== analyticsToken) return;
+        view = viewFromEvents(events);
         state.analyticsTruncated = truncated;
-        state.analyticsError = null;
       }
+      state.analyticsView = view;
+      writeSession<CachedAnalytics>(`admin-analytics:${range}`, { view });
     } catch (err) {
-      state.analyticsError = err instanceof Error ? err.message : 'Telemetry request failed';
-      state.analyticsEvents = [];
+      if (token !== analyticsToken) return;
+      state.analyticsError = err instanceof Error ? err.message : (err as { message?: string })?.message ?? 'Telemetry request failed';
+      state.analyticsView = null;
     } finally {
-      state.analyticsLoading = false;
+      if (token === analyticsToken) state.analyticsLoading = false;
     }
   };
 
+  /** Paints the dashboard shell at once, then fills each section the moment its own data arrives. */
   const refresh = async (): Promise<void> => {
     state.busy = true;
     // Both the stored-session boot and the login form land here, so names load on either path.
     initThemeTitles();
     initMockExams();
     initThemeNotes();
+    state.analyticsView = readCachedAnalytics(state.analyticsTimeRange); // last answer, if any, while the new one is fetched
+    state.analyticsLoading = true;
+    state.questionsLoading = true;
     render();
+    armFeedObserver();
+
+    void loadAnalytics().then(updateTelemetry);
+    void loadQuestionCounts().then(() => {
+      if (state.mockManagerOpen) render();
+    });
+    const firstPage = reloadFeed();
     try {
-      const [, , themeUploadError] = await Promise.all([
-        loadQuestions(),
-        loadAnalytics(),
+      const [themeUploadError] = await Promise.all([
         loadThemeTitlesForAdmin(),
-        loadMockExams(),
+        loadMockExams().then(() => updateFeedView(state, root)),
         loadThemeNotes(),
       ]);
-      state.busy = false;
-      state.error = null;
-      render();
+      updateFeedView(state, root); // names are in: badge labels and the theme filter can use them
       if (themeUploadError) {
         showToast(themeUploadError, 'error');
       }
     } catch (error) {
-      state.busy = false;
-      state.error = error instanceof Error ? error.message : 'Failed to load dashboard data.';
-      render();
+      showToast(error instanceof Error ? error.message : 'Could not load the theme names.', 'error');
     }
+    await firstPage;
+    state.busy = false;
   };
 
   const syncSession = async (): Promise<void> => {
@@ -2030,11 +2111,16 @@ export function bootAdmin(root: HTMLElement): void {
         const previousQuestion = targetIndex !== -1 ? state.questions[targetIndex] : undefined;
 
         if (targetIndex !== -1 && previousQuestion) {
-          state.questions[targetIndex] = {
-            ...previousQuestion,
-            ...payload,
-            mock_exam_id: target.mock_exam_id,
-          };
+          const updated: Question = { ...previousQuestion, ...payload, mock_exam_id: target.mock_exam_id };
+          state.questions[targetIndex] = updated;
+          // An edit can move a question out of the current filter (another theme, say): it then leaves the list.
+          if (!questionMatchesFilters(updated, currentFilters(state))) {
+            state.questions.splice(targetIndex, 1);
+            if (state.questionTotal !== null) state.questionTotal = Math.max(0, state.questionTotal - 1);
+          }
+          if (state.questionCounts) {
+            state.questionCounts = adjustQuestionCounts(adjustQuestionCounts(state.questionCounts, previousQuestion, -1), updated, 1);
+          }
         }
 
         state.editingId = null;
@@ -2077,10 +2163,9 @@ export function bootAdmin(root: HTMLElement): void {
           .eq('id', editingId)
           .then(({ error }) => {
             if (error) {
-              if (previousQuestion && targetIndex !== -1) {
-                state.questions[targetIndex] = previousQuestion;
-                updateFeedView(state, root);
-              }
+              // Simplest way back to the truth: read the library and the counts again.
+              void reloadFeed();
+              void loadQuestionCounts();
               showToast(`Update failed: ${error.message}`, 'error');
             }
           });
@@ -2111,17 +2196,19 @@ export function bootAdmin(root: HTMLElement): void {
               return;
             }
 
-            const created = (data && data[0]) as Question | undefined;
-            if (created) {
+            const created: Question = ((data && data[0]) as Question | undefined) ?? {
+              id: 'temp-' + Date.now(),
+              ...payload,
+              mock_exam_id: target.mock_exam_id,
+              created_at: new Date().toISOString(),
+            };
+            // The new question is the newest, so it goes to the top: but only when the current filter would show it.
+            const showsHere = questionMatchesFilters(created, currentFilters(state));
+            if (showsHere) {
               state.questions.unshift(created);
-            } else {
-              state.questions.unshift({
-                id: 'temp-' + Date.now(),
-                ...payload,
-                mock_exam_id: target.mock_exam_id,
-                created_at: new Date().toISOString(),
-              });
+              if (state.questionTotal !== null) state.questionTotal += 1;
             }
+            if (state.questionCounts) state.questionCounts = adjustQuestionCounts(state.questionCounts, created, 1);
 
             // Keep the subject and target so several questions can be added to the same theme or mock exam.
             form.reset();
@@ -2129,11 +2216,11 @@ export function bootAdmin(root: HTMLElement): void {
             const scrollable = form.querySelector<HTMLElement>('.panel-form-scrollable');
             if (scrollable) scrollable.scrollTop = 0;
             updateFeedView(state, root);
-            const firstCard = root.querySelector<HTMLElement>('.question-card-item');
+            const firstCard = showsHere ? root.querySelector<HTMLElement>('.question-card-item') : null;
             if (firstCard) {
               firstCard.classList.add('just-added');
             }
-            showToast('New question created successfully!', 'success');
+            showToast(showsHere ? 'New question created successfully!' : 'Question created. It is outside the current filter, so it is not listed here.', 'success');
           } catch (error: unknown) {
             form.classList.remove('is-submitting');
             if (submitBtn) {
@@ -2176,8 +2263,7 @@ export function bootAdmin(root: HTMLElement): void {
             throw error;
           }
 
-          await loadQuestions();
-          updateFeedView(state, root);
+          await Promise.all([reloadFeed(), loadQuestionCounts()]);
           dropzone?.classList.remove('is-importing');
           input.value = '';
           showToast(`Successfully imported ${questions.length} questions!`, 'success');
@@ -2215,13 +2301,13 @@ export function bootAdmin(root: HTMLElement): void {
           state.filterTheme = 'All';
         }
       }
-      updateFeedView(state, root);
+      void reloadFeed();
       return;
     }
 
     if (select.id === 'filter-theme') {
       state.filterTheme = select.value as AdminState['filterTheme'];
-      updateFeedView(state, root);
+      void reloadFeed();
       return;
     }
 
@@ -2248,6 +2334,7 @@ export function bootAdmin(root: HTMLElement): void {
     state.filterSubject = exam.subject;
     state.filterTheme = target;
     render();
+    void reloadFeed();
     const form = root.querySelector<HTMLFormElement>('#question-form');
     if (form) {
       fillQuestionForm(form, { ...defaultQuestionForm, subject: exam.subject, theme: target });
@@ -2296,22 +2383,29 @@ export function bootAdmin(root: HTMLElement): void {
       const range = action.dataset.range as AnalyticsTimeRange | undefined;
       if (range && state.analyticsTimeRange !== range) {
         state.analyticsTimeRange = range;
-        render();
-        void loadAnalytics().then(() => render());
+        state.analyticsView = readCachedAnalytics(range); // never show another range's numbers under this range's label
+        state.analyticsLoading = true;
+        updateTelemetry();
+        void loadAnalytics().then(updateTelemetry);
       }
       return;
     }
 
     if (action.dataset.action === 'refresh-analytics') {
       state.analyticsLoading = true;
-      render();
-      void loadAnalytics().then(() => render());
+      updateTelemetry();
+      void loadAnalytics().then(updateTelemetry);
       return;
     }
 
     if (action.dataset.action === 'toggle-subject-breakdown') {
       state.showSubjectBreakdown = !state.showSubjectBreakdown;
-      render();
+      updateTelemetry();
+      return;
+    }
+
+    if (action.dataset.action === 'retry-questions') {
+      void loadQuestionsPage(state.questions.length > 0 ? 'more' : 'reset', true);
       return;
     }
 
@@ -2377,16 +2471,18 @@ export function bootAdmin(root: HTMLElement): void {
       if (!exam || state.mockSaving) {
         return;
       }
-      const ownCount = countOwnQuestions(state.questions, exam.id);
+      const ownCount = countOwnQuestions(state.questionCounts ?? [], exam.id);
       const ownNote = ownCount > 0 ? ` Its ${ownCount} own ${ownCount === 1 ? 'question' : 'questions'} will be deleted too.` : '';
       if (!window.confirm(`Delete the mock exam "${exam.title}"? Students will no longer see it.${ownNote}`)) {
         return;
       }
       void deleteMockExam(exam.id).then(
         () => {
-          // The database deletes the exam's own questions with it; mirror that here.
-          state.questions = state.questions.filter((question) => question.mock_exam_id !== exam.id);
-          if (state.filterTheme === `${MOCK_TARGET_PREFIX}${exam.id}`) {
+          // The database deletes the exam's own questions with it; mirror that in the counts and the list.
+          const wasListed = state.questions.some((question) => question.mock_exam_id === exam.id);
+          const wasFiltered = state.filterTheme === `${MOCK_TARGET_PREFIX}${exam.id}`;
+          if (state.questionCounts) state.questionCounts = removeExamFromCounts(state.questionCounts, exam.id);
+          if (wasFiltered) {
             state.filterTheme = 'All';
           }
           if (state.mockEditingId === exam.id) {
@@ -2394,6 +2490,7 @@ export function bootAdmin(root: HTMLElement): void {
           }
           showToast('Mock exam deleted', 'success');
           render();
+          if (wasListed || wasFiltered) void reloadFeed();
         },
         (err: unknown) => {
           showToast(err instanceof Error ? err.message : 'Mock exam was not deleted.', 'error');
@@ -2611,24 +2708,39 @@ export function bootAdmin(root: HTMLElement): void {
         if (cancelBtn) cancelBtn.style.display = 'none';
       }
 
-      const countDisplay = root.querySelector<HTMLElement>('#library-count-display');
-      const totalCountEl = root.querySelector<HTMLElement>('#stat-total-questions');
-      const visibleCountEl = root.querySelector<HTMLElement>('#stat-visible-questions');
-      const visibleCount = state.questions.filter((q) => {
-        const sub = state.filterSubject === 'All' || q.subject === state.filterSubject;
-        const th = state.filterTheme === 'All' || questionTarget(q) === state.filterTheme;
-        return sub && th;
-      }).length;
-      if (countDisplay) countDisplay.innerHTML = `Showing <strong>${visibleCount}</strong> of ${state.questions.length}`;
-      if (totalCountEl) totalCountEl.textContent = String(state.questions.length);
-      if (visibleCountEl) visibleCountEl.textContent = String(visibleCount);
+      if (state.questionTotal !== null) state.questionTotal = Math.max(0, state.questionTotal - 1);
+      if (state.questionCounts) state.questionCounts = adjustQuestionCounts(state.questionCounts, deletedQuestion, -1);
+      updateCounters();
 
       let isUndone = false;
+      let deleteFinished: PromiseLike<boolean> = Promise.resolve(false);
       showToast('Question removed from bank', 'info', {
         label: 'Undo',
         onClick: () => {
           isUndone = true;
+          // The delete was already sent, so Undo has to put the question back in the database, not only on screen.
+          void deleteFinished.then(async (wasDeleted) => {
+            if (!wasDeleted) return;
+            const { error } = await supabase.from('questions').insert({
+              id: deletedQuestion.id,
+              subject: deletedQuestion.subject,
+              theme: deletedQuestion.theme,
+              ...(deletedQuestion.mock_exam_id ? { mock_exam_id: deletedQuestion.mock_exam_id } : {}),
+              question_text: deletedQuestion.question_text,
+              options: deletedQuestion.options,
+              correct_index: deletedQuestion.correct_index,
+              explanation: deletedQuestion.explanation,
+              created_at: deletedQuestion.created_at,
+            });
+            if (error) {
+              showToast(`Could not restore the question: ${error.message}`, 'error');
+              void reloadFeed();
+              void loadQuestionCounts();
+            }
+          });
           state.questions.splice(questionIndex, 0, deletedQuestion);
+          if (state.questionTotal !== null) state.questionTotal += 1;
+          if (state.questionCounts) state.questionCounts = adjustQuestionCounts(state.questionCounts, deletedQuestion, 1);
           updateFeedView(state, root);
           const restored = root.querySelector<HTMLElement>(`[data-card-id="${id}"]`);
           if (restored) restored.classList.add('just-restored');
@@ -2636,16 +2748,20 @@ export function bootAdmin(root: HTMLElement): void {
         },
       });
 
-      void supabase
+      deleteFinished = supabase
         .from('questions')
         .delete()
         .eq('id', id)
         .then(({ error }) => {
-          if (error && !isUndone) {
+          if (!error) return true;
+          if (!isUndone) {
             state.questions.splice(questionIndex, 0, deletedQuestion);
+            if (state.questionTotal !== null) state.questionTotal += 1;
+            if (state.questionCounts) state.questionCounts = adjustQuestionCounts(state.questionCounts, deletedQuestion, 1);
             updateFeedView(state, root);
             showToast(`Delete failed: ${error.message}`, 'error');
           }
+          return false;
         });
       return;
     }
@@ -2767,7 +2883,11 @@ export function bootAdmin(root: HTMLElement): void {
     }
 
     state.searchTerm = input.value;
-    updateFeedView(state, root);
+    // Searching is done by the database; wait for a pause in typing so it asks once, not once per key.
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      if (normalizeSearchTerm(state.searchTerm) !== appliedSearch) void reloadFeed();
+    }, 280);
   });
 
   root.addEventListener('keydown', (event) => {
