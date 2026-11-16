@@ -75,14 +75,24 @@ export function mountAudioPlayer(root: HTMLElement): () => void {
 
   const hasDuration = (): boolean => Number.isFinite(audio.duration) && audio.duration > 0;
 
+  // Only what visibly changed is written to the page, so a playing recording costs almost nothing while scrolling.
+  let shown = { current: '', duration: '', step: -1 };
   const paint = (): void => {
     const duration = hasDuration() ? audio.duration : 0;
     const time = scrubbing ? (Number(seek.value) / SEEK_STEPS) * duration : audio.currentTime;
-    currentEl.textContent = formatClock(time);
-    durationEl.textContent = duration ? formatClock(duration) : '--:--';
-    if (!scrubbing) seek.value = duration ? String(Math.round((audio.currentTime / duration) * SEEK_STEPS)) : '0';
-    seek.style.setProperty('--p', `${duration ? (time / duration) * 100 : 0}%`);
-    seek.setAttribute('aria-valuetext', duration ? `${formatClock(time)} of ${formatClock(duration)}` : formatClock(time));
+    const current = formatClock(time);
+    const total = duration ? formatClock(duration) : '--:--';
+    const step = duration ? Math.round((time / duration) * SEEK_STEPS) : 0;
+    if (current !== shown.current) currentEl.textContent = current;
+    if (total !== shown.duration) durationEl.textContent = total;
+    if (step !== shown.step) {
+      if (!scrubbing) seek.value = String(step);
+      seek.style.setProperty('--p', `${step / (SEEK_STEPS / 100)}%`);
+    }
+    if (current !== shown.current || total !== shown.duration) {
+      seek.setAttribute('aria-valuetext', duration ? `${current} of ${total}` : current);
+    }
+    shown = { current, duration: total, step };
   };
 
   const tick = (): void => {

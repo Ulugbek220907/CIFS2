@@ -13,12 +13,14 @@ declare global {
  */
 function isInnerScroller(node: HTMLElement): boolean {
   for (let el: HTMLElement | null = node; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
-    if (el.hasAttribute('data-lenis-prevent') || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+    if (el.hasAttribute('data-lenis-prevent') || el.tagName === 'SELECT') {
       return true;
     }
-    // A slider (the audio seek bar) must keep its own drag.
-    if (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'range') {
-      return true;
+    // A text box only keeps the wheel when it really has hidden text to scroll through. Otherwise the page scrolls
+    // smoothly over it: handing the wheel back and forth as boxes slide under the pointer made the page stutter.
+    if (el.tagName === 'TEXTAREA') {
+      if (el.scrollHeight > el.clientHeight + 1) return true;
+      continue;
     }
     const overflowY = getComputedStyle(el).overflowY;
     if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
