@@ -3,6 +3,7 @@ import { fetchAcsForAdmin, getAcsItem, removeAcsAudio, saveAcsText, uploadAcsAud
 import {
   ACS_ARGUMENT_MAX,
   ACS_ARGUMENTS_MAX,
+  ACS_KINDS,
   ACS_AUDIO_EXTENSIONS,
   ACS_AUDIO_MAX_BYTES,
   ACS_SECTIONS,
@@ -40,7 +41,7 @@ let openInstance: { close: () => void } | null = null;
 export function openAcsManager(notify: Notify): void {
   if (openInstance) return;
 
-  let kind: AcsKind = 'listening';
+  const kind: AcsKind = 'listening';
   let loading = true;
   let loadError: string | null = null;
   const drafts = new Map<string, Draft>();
@@ -60,19 +61,11 @@ export function openAcsManager(notify: Notify): void {
       <div class="theme-modal-header">
         <div>
           <h2 id="acs-modal-title">${escapeHtml(ACS_SUBJECT)}</h2>
-          <p>Name each listening, upload its recording, and write the arguments. Students see changes as soon as you save.</p>
+          <p>${escapeHtml(ACS_SECTIONS.listening.label)}: name each listening, upload its recording, and add arguments under it. Students see changes as soon as you save.</p>
         </div>
         <button class="theme-modal-close" type="button" data-acs-close aria-label="Close">&times;</button>
       </div>
       <div class="theme-modal-body acs-modal-body" data-lenis-prevent>
-        <div class="sidebar-tab-switcher acs-tabs" role="tablist" aria-label="Section">
-          ${(['listening', 'argumentation'] as const)
-            .map(
-              (k) =>
-                `<button type="button" class="sidebar-tab-btn" role="tab" data-acs-tab="${k}" aria-selected="false">${escapeHtml(ACS_SECTIONS[k].label)}</button>`,
-            )
-            .join('')}
-        </div>
         <div data-acs-content></div>
       </div>
       <div class="theme-modal-footer">
@@ -92,7 +85,7 @@ export function openAcsManager(notify: Notify): void {
     let draft = drafts.get(id);
     if (!draft) {
       const item = getAcsItem(k, position);
-      draft = { title: item.title, arguments: k === 'argumentation' ? [...item.arguments] : [] };
+      draft = { title: item.title, arguments: [...item.arguments] };
       drafts.set(id, draft);
     }
     return draft;
@@ -103,15 +96,12 @@ export function openAcsManager(notify: Notify): void {
     if (!draft) return false;
     const item = getAcsItem(k, position);
     if (draft.title.trim() !== item.title.trim()) return true;
-    if (k === 'argumentation') {
-      const prepared = draft.arguments.map((entry) => entry.trim()).filter(Boolean);
-      return JSON.stringify(prepared) !== JSON.stringify(item.arguments);
-    }
-    return false;
+    const prepared = draft.arguments.map((entry) => entry.trim()).filter(Boolean);
+    return JSON.stringify(prepared) !== JSON.stringify(item.arguments);
   };
 
   const anyDirty = (): boolean => {
-    for (const k of ['listening', 'argumentation'] as const) {
+    for (const k of ACS_KINDS) {
       for (let position = 1; position <= ACS_SLOTS; position += 1) if (isDirty(k, position)) return true;
     }
     return false;
@@ -119,9 +109,9 @@ export function openAcsManager(notify: Notify): void {
 
   const chipFor = (item: AcsItem, dirty: boolean): { text: string; tone: string } => {
     if (dirty) return { text: 'Unsaved changes', tone: 'is-dirty' };
-    if (item.kind === 'listening') return item.audio_path ? { text: 'Audio ready', tone: 'is-ok' } : { text: 'No audio yet', tone: 'is-soon' };
     const count = item.arguments.length;
-    return count > 0 ? { text: count === 1 ? '1 argument' : `${count} arguments`, tone: 'is-ok' } : { text: 'No arguments yet', tone: 'is-soon' };
+    const extra = count > 0 ? ` · ${count} ${count === 1 ? 'argument' : 'arguments'}` : '';
+    return item.audio_path ? { text: `Audio ready${extra}`, tone: 'is-ok' } : { text: `No audio yet${extra}`, tone: 'is-soon' };
   };
 
   const renderAudio = (item: AcsItem): string => {
@@ -210,7 +200,14 @@ export function openAcsManager(notify: Notify): void {
           </div>
           <span class="acs-admin-chip ${chip.tone}" data-acs-chip>${escapeHtml(chip.text)}</span>
         </div>
-        ${k === 'listening' ? renderAudio(item) : renderArguments(draft, state === 'saving')}
+        <div class="acs-admin-block">
+          <div class="acs-admin-block-title">Recording</div>
+          ${renderAudio(item)}
+        </div>
+        <div class="acs-admin-block">
+          <div class="acs-admin-block-title">Arguments <span class="acs-opt">(optional, shown under the recording)</span></div>
+          ${renderArguments(draft, state === 'saving')}
+        </div>
         <div class="acs-admin-item-foot">
           <span class="acs-admin-msg ${message?.error ? 'is-error' : ''}" data-acs-msg role="status" aria-live="polite">${escapeHtml(message?.text ?? '')}</span>
           <button type="button" class="acs-save" data-acs-save ${dirty && !state ? '' : 'disabled'}>${state === 'saving' ? 'Saving…' : 'Save'}</button>
@@ -243,19 +240,11 @@ export function openAcsManager(notify: Notify): void {
   };
 
   const render = (): void => {
-    for (const tab of backdrop.querySelectorAll<HTMLElement>('[data-acs-tab]')) {
-      const active = tab.dataset.acsTab === kind;
-      tab.classList.toggle('active', active);
-      tab.setAttribute('aria-selected', String(active));
-    }
     if (loading) {
       content.innerHTML = '<div class="acs-admin-state"><div class="spinner" aria-hidden="true"></div><p>Loading…</p></div>';
       return;
     }
-    const intro =
-      kind === 'listening'
-        ? 'Each Listening button opens an audio player with a note-taking area. Upload one recording per listening.'
-        : 'Each Listening button opens a list of arguments (questions) with a note-taking area. Add them in the order students should read them.';
+    const intro = 'Each Listening button opens the audio player, then the arguments (if you add any), then a note-taking area for the student.';
     const banner = loadError
       ? `<div class="acs-admin-warning" role="alert"><strong>Could not load the saved content.</strong><span>${escapeHtml(loadError)}</span><button type="button" class="action-btn-sm" data-acs-retry>Try again</button></div>`
       : '';
@@ -287,20 +276,18 @@ export function openAcsManager(notify: Notify): void {
     const id = key(k, position);
     if (busy.has(id)) return;
     const draft = draftFor(k, position);
-    if (k === 'argumentation') {
-      const prepared = prepareArgumentsForSave(draft.arguments);
-      if (!prepared.ok) {
-        setMessage(k, position, prepared.error, true);
-        refreshItem(k, position);
-        return;
-      }
+    const prepared = prepareArgumentsForSave(draft.arguments);
+    if (!prepared.ok) {
+      setMessage(k, position, prepared.error, true);
+      refreshItem(k, position);
+      return;
     }
     busy.set(id, 'saving');
     setMessage(k, position, '');
     refreshItem(k, position);
     try {
-      const saved = await saveAcsText(k, position, { title: draft.title, arguments: k === 'argumentation' ? draft.arguments : undefined });
-      drafts.set(id, { title: saved.title, arguments: k === 'argumentation' ? [...saved.arguments] : [] });
+      const saved = await saveAcsText(k, position, { title: draft.title, arguments: draft.arguments });
+      drafts.set(id, { title: saved.title, arguments: [...saved.arguments] });
       setMessage(k, position, 'Saved ✓');
       notify(`${acsSlotLabel(k, position)} saved.`, 'success');
     } catch (error) {
@@ -429,12 +416,6 @@ export function openAcsManager(notify: Notify): void {
   backdrop.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
     if (target.closest('[data-acs-close]')) return close();
-    const tab = target.closest<HTMLElement>('[data-acs-tab]');
-    if (tab) {
-      kind = tab.dataset.acsTab as AcsKind;
-      render();
-      return;
-    }
     if (target.closest('[data-acs-retry]')) return void load();
     const ref = itemOf(target);
     if (!ref) return;
@@ -514,6 +495,6 @@ export function openAcsManager(notify: Notify): void {
   document.addEventListener('keydown', onKeydown, true);
   openInstance = { close: () => close(true) };
   render();
-  backdrop.querySelector<HTMLElement>('[data-acs-tab]')?.focus();
+  backdrop.querySelector<HTMLElement>('[data-acs-close]')?.focus();
   void load();
 }

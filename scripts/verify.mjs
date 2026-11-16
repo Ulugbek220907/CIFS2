@@ -928,30 +928,30 @@ test('Migration 0013 adds Intermediate Microeconomics and keeps every earlier su
 // ---------------------------------------------------------------------------------------------------------------------
 // Academic Communication Skills (ACS)
 // ---------------------------------------------------------------------------------------------------------------------
-test('ACS: normalizeAcsRows always returns exactly 16 clean items (8 per section)', async () => {
-  const { normalizeAcsRows, ACS_SLOTS } = await import('../src/acsModel.ts');
+test('ACS: normalizeAcsRows always returns exactly 8 clean Listening items', async () => {
+  const { normalizeAcsRows, ACS_SLOTS, ACS_KINDS } = await import('../src/acsModel.ts');
+  assert.deepEqual([...ACS_KINDS], ['listening'], 'Argumentation Preparation is gone: one section only');
   const empty = normalizeAcsRows(undefined);
-  assert.equal(empty.length, 16);
-  assert.equal(empty.filter((item) => item.kind === 'listening').length, ACS_SLOTS);
-  assert.equal(empty.filter((item) => item.kind === 'argumentation').length, ACS_SLOTS);
-  assert.deepEqual(empty.filter((item) => item.kind === 'listening').map((item) => item.position), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(empty.length, ACS_SLOTS);
+  assert.deepEqual(empty.map((item) => item.position), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(empty.every((item) => item.kind === 'listening'));
 
   const rows = normalizeAcsRows([
-    { kind: 'listening', position: 2, title: '  Trade  ', audio_path: 'listening/2-abc.mp3', audio_name: 'a.mp3', audio_size: 10, arguments: ['ignored'] },
-    { kind: 'argumentation', position: '3', title: 'Debate', audio_path: 'listening/x.mp3', arguments: [' one ', '', 5, 'two'] },
+    { kind: 'listening', position: 2, title: '  Trade  ', audio_path: 'listening/2-abc.mp3', audio_name: 'a.mp3', audio_size: 10, arguments: [' one ', '', 5, 'two'] },
+    { kind: 'argumentation', position: 3, title: 'Old section row', arguments: ['ignored'] },
     { kind: 'listening', position: 9, title: 'out of range' },
     { kind: 'nonsense', position: 1 },
     null,
     'text',
   ]);
-  assert.equal(rows.length, 16);
-  const l2 = rows.find((item) => item.kind === 'listening' && item.position === 2);
+  assert.equal(rows.length, 8);
+  const l2 = rows.find((item) => item.position === 2);
   assert.equal(l2.title, 'Trade', 'titles are trimmed');
   assert.equal(l2.audio_path, 'listening/2-abc.mp3');
-  assert.deepEqual(l2.arguments, [], 'a listening never carries arguments');
-  const a3 = rows.find((item) => item.kind === 'argumentation' && item.position === 3);
-  assert.deepEqual(a3.arguments, ['one', 'two'], 'blank and non-text arguments are dropped, text is trimmed');
-  assert.equal(a3.audio_path, null, 'an argumentation item never carries audio');
+  assert.deepEqual(l2.arguments, ['one', 'two'], 'a listening can now hold arguments: blank and non-text ones are dropped, text is trimmed');
+  const l3 = rows.find((item) => item.position === 3);
+  assert.equal(l3.title, '', 'a row of the removed Argumentation section is ignored, not shown');
+  assert.deepEqual(l3.arguments, []);
 });
 
 test('ACS: only audio paths this app creates are ever used', async () => {
@@ -967,15 +967,15 @@ test('ACS: only audio paths this app creates are ever used', async () => {
 test('ACS: labels and status chips', async () => {
   const { acsSlotLabel, acsFullLabel, acsItemStatus, blankAcsItem, acsItemHasContent } = await import('../src/acsModel.ts');
   assert.equal(acsSlotLabel('listening', 3), 'Listening 3');
-  assert.equal(acsSlotLabel('argumentation', 8), 'Listening 8', 'both sections use "Listening N" buttons');
   assert.equal(acsFullLabel({ ...blankAcsItem('listening', 3), title: 'Trade' }), 'Listening 3: Trade');
   assert.equal(acsFullLabel({ ...blankAcsItem('listening', 3), title: '   ' }), 'Listening 3');
   assert.equal(acsItemStatus(blankAcsItem('listening', 1)), 'Coming soon');
   assert.equal(acsItemStatus({ ...blankAcsItem('listening', 1), audio_path: 'listening/1-a.mp3' }), 'Audio ready');
-  assert.equal(acsItemStatus(blankAcsItem('argumentation', 1)), 'Coming soon');
-  assert.equal(acsItemStatus({ ...blankAcsItem('argumentation', 1), arguments: ['a'] }), '1 argument');
-  assert.equal(acsItemStatus({ ...blankAcsItem('argumentation', 1), arguments: ['a', 'b', 'c'] }), '3 arguments');
+  assert.equal(acsItemStatus({ ...blankAcsItem('listening', 1), arguments: ['a'] }), '1 argument');
+  assert.equal(acsItemStatus({ ...blankAcsItem('listening', 1), arguments: ['a', 'b', 'c'] }), '3 arguments');
+  assert.equal(acsItemStatus({ ...blankAcsItem('listening', 1), audio_path: 'listening/1-a.mp3', arguments: ['a'] }), 'Audio ready');
   assert.equal(acsItemHasContent(blankAcsItem('listening', 1)), false);
+  assert.equal(acsItemHasContent({ ...blankAcsItem('listening', 1), arguments: ['a'] }), true);
 });
 
 test('ACS: audio file checks and upload paths', async () => {
@@ -1011,6 +1011,16 @@ test('ACS: arguments are cleaned and limited before saving', async () => {
   assert.equal(prepareArgumentsForSave(Array.from({ length: ACS_ARGUMENTS_MAX }, () => 'a')).ok, true);
 });
 
+test('ACS: three note areas, "Your Notes" keeps its original storage key', () => {
+  const code = fs.readFileSync('src/acsNotes.ts', 'utf8');
+  assert.match(code, /title: 'Your Notes'/);
+  assert.match(code, /title: 'Listening summary'/);
+  assert.match(code, /title: 'Argumentation'/);
+  assert.ok(code.indexOf("title: 'Your Notes'") < code.indexOf("title: 'Listening summary'") && code.indexOf("title: 'Listening summary'") < code.indexOf("title: 'Argumentation'"), 'shown in this order');
+  assert.match(code, /field === 'notes' \? `acs-notes:\$\{kind\}:\$\{position\}`/, 'notes typed before the other areas existed are still found');
+  assert.match(code, /`acs-notes:\$\{kind\}:\$\{position\}:\$\{field\}`/);
+});
+
 test('ACS: clock text and notes helpers', async () => {
   const { formatClock, clampNotes, countWords, ACS_NOTES_MAX } = await import('../src/acsModel.ts');
   assert.equal(formatClock(0), '0:00');
@@ -1039,6 +1049,18 @@ test('ACS migration 0014: table, rules, public audio bucket writable only by adm
     assert.match(sql, new RegExp(`on storage\\.objects\\s+for ${cmd} to authenticated[^;]*public\\.is_admin\\(\\)`, 'is'), `storage ${cmd} is admin-only`);
   }
   assert.doesNotMatch(sql, /for (insert|update|delete)[^;]*to (anon|public)/i, 'no public writes');
+  assert.match(sql, /pg_notify\('pgrst',\s*'reload schema'\)/i);
+});
+
+test('ACS migration 0016: one Listening section; arguments live on listenings; old rows carried over then removed', () => {
+  const sql = fs.readFileSync('supabase/migrations/0016_acs_listening_only.sql', 'utf8');
+  assert.match(sql, /drop constraint if exists acs_items_arguments_only_for_argumentation/i, 'listenings may now hold arguments');
+  // the carry-over runs before the delete, so nothing an admin typed is lost
+  const carry = sql.search(/set arguments = argumentation\.arguments/i);
+  const del = sql.search(/delete from public\.acs_items where kind = 'argumentation'/i);
+  assert.ok(carry > 0 && del > carry, 'arguments and names are copied over before the Argumentation rows are deleted');
+  assert.match(sql, /set title = argumentation\.title/i);
+  assert.match(sql, /add constraint acs_items_kind_check check \(kind = 'listening'\)/i);
   assert.match(sql, /pg_notify\('pgrst',\s*'reload schema'\)/i);
 });
 
