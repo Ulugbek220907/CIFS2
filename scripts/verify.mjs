@@ -1011,6 +1011,16 @@ test('ACS: arguments are cleaned and limited before saving', async () => {
   assert.equal(prepareArgumentsForSave(Array.from({ length: ACS_ARGUMENTS_MAX }, () => 'a')).ok, true);
 });
 
+test('ACS: three note areas, "Your Notes" keeps its original storage key', () => {
+  const code = fs.readFileSync('src/acsNotes.ts', 'utf8');
+  assert.match(code, /title: 'Your Notes'/);
+  assert.match(code, /title: 'Listening summary'/);
+  assert.match(code, /title: 'Argumentation'/);
+  assert.ok(code.indexOf("title: 'Your Notes'") < code.indexOf("title: 'Listening summary'") && code.indexOf("title: 'Listening summary'") < code.indexOf("title: 'Argumentation'"), 'shown in this order');
+  assert.match(code, /field === 'notes' \? `acs-notes:\$\{kind\}:\$\{position\}`/, 'notes typed before the other areas existed are still found');
+  assert.match(code, /`acs-notes:\$\{kind\}:\$\{position\}:\$\{field\}`/);
+});
+
 test('ACS: clock text and notes helpers', async () => {
   const { formatClock, clampNotes, countWords, ACS_NOTES_MAX } = await import('../src/acsModel.ts');
   assert.equal(formatClock(0), '0:00');

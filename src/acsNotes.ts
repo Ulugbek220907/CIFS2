@@ -5,38 +5,50 @@ import { ACS_NOTES_MAX, clampNotes, countWords, type AcsKind } from './acsModel'
 // The student's own notes for one listening. They live only on this device (localStorage):
 // students are anonymous, so there is no account to attach them to. Nothing here is ever sent to Supabase.
 
-function key(kind: AcsKind, position: number): string {
-  return `acs-notes:${kind}:${position}`;
+/** The three note-taking areas under every listening, in the order they are shown. */
+export type AcsNoteField = 'notes' | 'summary' | 'argumentation';
+
+export const ACS_NOTE_FIELDS: readonly { field: AcsNoteField; title: string; placeholder: string }[] = [
+  { field: 'notes', title: 'Your Notes', placeholder: 'Type your notes here as you listen and read. They are saved automatically.' },
+  { field: 'summary', title: 'Listening summary', placeholder: 'Write a short summary of what you heard. It is saved automatically.' },
+  { field: 'argumentation', title: 'Argumentation', placeholder: 'Write the arguments you noticed or want to make. They are saved automatically.' },
+];
+
+/** "Your Notes" keeps the storage key it always had, so notes written before the other two areas existed are still there. */
+export function notesStorageKey(kind: AcsKind, position: number, field: AcsNoteField = 'notes'): string {
+  return field === 'notes' ? `acs-notes:${kind}:${position}` : `acs-notes:${kind}:${position}:${field}`;
 }
 
-export function loadAcsNotes(kind: AcsKind, position: number): string {
-  const saved = readLocal<unknown>(key(kind, position));
+export function loadAcsNotes(kind: AcsKind, position: number, field: AcsNoteField = 'notes'): string {
+  const saved = readLocal<unknown>(notesStorageKey(kind, position, field));
   return typeof saved === 'string' ? clampNotes(saved) : '';
 }
 
-export function saveAcsNotes(kind: AcsKind, position: number, text: string): void {
+export function saveAcsNotes(kind: AcsKind, position: number, text: string, field: AcsNoteField = 'notes'): void {
   const clean = clampNotes(text);
-  if (clean.trim()) writeLocal(key(kind, position), clean);
-  else removeLocal(key(kind, position));
+  if (clean.trim()) writeLocal(notesStorageKey(kind, position, field), clean);
+  else removeLocal(notesStorageKey(kind, position, field));
 }
 
-export function renderNotesCard(kind: AcsKind, position: number): string {
-  const initial = loadAcsNotes(kind, position);
+export function renderNotesCard(kind: AcsKind, position: number, field: AcsNoteField = 'notes'): string {
+  const initial = loadAcsNotes(kind, position, field);
+  const info = ACS_NOTE_FIELDS.find((item) => item.field === field) ?? ACS_NOTE_FIELDS[0];
+  const id = `acs-${field}-input`;
   return `
-    <article class="acs-card acs-notes-card" data-notes-card>
+    <article class="acs-card acs-notes-card" data-notes-card data-notes-field="${field}">
       <div class="acs-card-head">
-        <h3>Your notes</h3>
+        <h3>${escapeHtml(info.title)}</h3>
         <span class="acs-notes-status" data-notes-status role="status" aria-live="polite">Saved on this device</span>
       </div>
-      <label class="visually-hidden" for="acs-notes-input">Your notes</label>
+      <label class="visually-hidden" for="${id}">${escapeHtml(info.title)}</label>
       <textarea
-        id="acs-notes-input"
+        id="${id}"
         class="acs-notes-input"
         data-notes-input
         rows="9"
         maxlength="${ACS_NOTES_MAX}"
         spellcheck="true"
-        placeholder="Type your notes here as you listen and read. They are saved automatically."
+        placeholder="${escapeHtml(info.placeholder)}"
       >${escapeHtml(initial)}</textarea>
       <div class="acs-notes-foot">
         <span class="acs-notes-count" data-notes-count>${countWords(initial)} words</span>
@@ -51,7 +63,7 @@ export function renderNotesCard(kind: AcsKind, position: number): string {
 }
 
 /** Makes a notes card work: autosave while typing, copy, and a two-step clear. Returns a function that saves and stops. */
-export function mountNotes(root: HTMLElement, kind: AcsKind, position: number): () => void {
+export function mountNotes(root: HTMLElement, kind: AcsKind, position: number, field: AcsNoteField = 'notes'): () => void {
   const input = root.querySelector<HTMLTextAreaElement>('[data-notes-input]');
   const status = root.querySelector<HTMLElement>('[data-notes-status]');
   const count = root.querySelector<HTMLElement>('[data-notes-count]');
@@ -71,7 +83,7 @@ export function mountNotes(root: HTMLElement, kind: AcsKind, position: number): 
     window.clearTimeout(timer);
     if (!dirty) return;
     dirty = false;
-    saveAcsNotes(kind, position, input.value);
+    saveAcsNotes(kind, position, input.value, field);
     setStatus('Saved on this device');
   };
   const grow = (): void => {

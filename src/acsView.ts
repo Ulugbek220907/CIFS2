@@ -11,7 +11,7 @@ import {
   type AcsKind,
 } from './acsModel';
 import { mountAudioPlayer, renderAudioPlayer } from './audioPlayer';
-import { mountNotes, renderNotesCard } from './acsNotes';
+import { ACS_NOTE_FIELDS, mountNotes, renderNotesCard, type AcsNoteField } from './acsNotes';
 
 // The Academic Communication Skills screens a student sees: the 8 numbered Listening buttons, and one listening
 // (its recording, its arguments if the admin wrote any, and a note-taking area underneath).
@@ -87,7 +87,7 @@ function renderArguments(item: AcsItem): string {
   `;
 }
 
-/** One listening: the recording on top, its arguments, then the student's notepad. */
+/** One listening: the recording on top, its arguments, then the student's three note areas. */
 export function renderAcsDetail(kind: AcsKind, position: number): string {
   const item = getAcsItem(kind, position);
   const section = ACS_SECTIONS[kind];
@@ -101,7 +101,7 @@ export function renderAcsDetail(kind: AcsKind, position: number): string {
       </div>
       ${renderRecording(item)}
       ${renderArguments(item)}
-      ${renderNotesCard(kind, position)}
+      ${ACS_NOTE_FIELDS.map((item) => renderNotesCard(kind, position, item.field)).join('')}
     </section>
   `;
 }
@@ -111,8 +111,9 @@ export function mountAcsDetail(root: HTMLElement, kind: AcsKind, position: numbe
   const cleanups: Array<() => void> = [];
   const player = root.querySelector<HTMLElement>('[data-player]');
   if (player) cleanups.push(mountAudioPlayer(player));
-  const notes = root.querySelector<HTMLElement>('[data-notes-card]');
-  if (notes) cleanups.push(mountNotes(notes, kind, position));
+  for (const card of root.querySelectorAll<HTMLElement>('[data-notes-card]')) {
+    cleanups.push(mountNotes(card, kind, position, (card.dataset.notesField ?? 'notes') as AcsNoteField));
+  }
   return () => {
     for (const cleanup of cleanups) cleanup();
   };
