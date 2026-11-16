@@ -2,7 +2,7 @@ import { escapeHtml } from './dom';
 import { readLocal, removeLocal, writeLocal } from './storage';
 import { ACS_NOTES_MAX, clampNotes, countWords, type AcsKind } from './acsModel';
 
-// The student's own notes for one listening or argumentation item. They live only on this device (localStorage):
+// The student's own notes for one listening. They live only on this device (localStorage):
 // students are anonymous, so there is no account to attach them to. Nothing here is ever sent to Supabase.
 
 function key(kind: AcsKind, position: number): string {
@@ -36,7 +36,7 @@ export function renderNotesCard(kind: AcsKind, position: number): string {
         rows="9"
         maxlength="${ACS_NOTES_MAX}"
         spellcheck="true"
-        placeholder="Type your notes here as you ${kind === 'listening' ? 'listen' : 'read'}. They are saved automatically."
+        placeholder="Type your notes here as you listen and read. They are saved automatically."
       >${escapeHtml(initial)}</textarea>
       <div class="acs-notes-foot">
         <span class="acs-notes-count" data-notes-count>${countWords(initial)} words</span>

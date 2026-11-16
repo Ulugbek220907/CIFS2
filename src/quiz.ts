@@ -25,7 +25,7 @@ import { trackQuizStart, trackQuizComplete } from './telemetry';
 import { scrollToTop } from './smoothScroll';
 import { ACS_SUBJECT, isAcsKind, isAcsPosition, type AcsKind } from './acsModel';
 import { initAcs, getAcsItem, syncAcsFromRemote } from './acs';
-import { mountAcsDetail, renderAcsDetail, renderAcsItemList, renderAcsLanding } from './acsView';
+import { mountAcsDetail, renderAcsDetail, renderAcsItemList } from './acsView';
 import type { AnswerReview, MockExam, Question, ResultRow, Subject, Theme } from './types';
 
 export type QuizLevel = 'CIFS' | 'Level 4' | 'Level 5';
@@ -42,7 +42,7 @@ interface QuizHistoryState {
 }
 
 /** How many history entries a step sits above the subject list (so Back and the in-app buttons can walk down). */
-const STEP_DEPTH: Record<QuizHistoryStep, number> = { subjects: 0, themes: 1, 'acs-section': 2, 'acs-item': 3, quiz: 2 };
+const STEP_DEPTH: Record<QuizHistoryStep, number> = { subjects: 0, themes: 1, 'acs-section': 1, 'acs-item': 2, quiz: 2 };
 
 interface AcsLocation {
   kind: AcsKind | null;
@@ -437,8 +437,8 @@ export class QuizApp {
     document.body.classList.remove('quiz-fullscreen');
     const onSubject = step !== 'subjects';
     const nextSubject = onSubject ? (step === 'themes' ? (subject ?? this.state.config?.subject ?? null) : ACS_SUBJECT as Subject) : null;
-    const kind = step === 'acs-section' || step === 'acs-item' ? acs.kind : null;
-    const position = step === 'acs-item' && kind ? acs.position : null;
+    const kind: AcsKind | null = step === 'acs-section' || step === 'acs-item' ? 'listening' : null;
+    const position = step === 'acs-item' ? acs.position : null;
     this.setState({
       ...idleFields(),
       selectedSubject: nextSubject,
@@ -461,8 +461,7 @@ export class QuizApp {
     // An ACS entry without a valid section / item (a hand-edited history entry) falls back to the screen above it.
     const entryKind = isAcsKind(entry?.acsKind) ? entry?.acsKind : null;
     const entryPosition = isAcsPosition(entry?.acsPosition) ? entry?.acsPosition : null;
-    if (step === 'acs-item' && (!entryKind || entryPosition === null)) step = entryKind ? 'acs-section' : 'themes';
-    if (step === 'acs-section' && !entryKind) step = 'themes';
+    if (step === 'acs-item' && entryPosition === null) step = 'acs-section';
 
     if (step === 'quiz') {
       // Forward onto a quiz entry that no longer has a quiz behind it: step back to the list instead.
@@ -537,9 +536,8 @@ export class QuizApp {
 
   private renderAcs(): string {
     const { acsKind, acsPosition } = this.state;
-    if (acsKind && acsPosition !== null) return renderAcsDetail(acsKind, acsPosition);
-    if (acsKind) return renderAcsItemList(acsKind);
-    return renderAcsLanding();
+    const kind: AcsKind = acsKind ?? 'listening';
+    return acsPosition !== null ? renderAcsDetail(kind, acsPosition) : renderAcsItemList(kind);
   }
 
   private renderSetup(): string {
@@ -930,23 +928,19 @@ export class QuizApp {
         return;
       }
 
-      this.writeStep('themes', subject, 'push');
+      // Academic Communication Skills has no themes: it opens straight onto its 8 Listening buttons.
+      const isAcs = subject === ACS_SUBJECT;
+      if (isAcs) this.writeStep('acs-section', subject, 'push', { kind: 'listening' });
+      else this.writeStep('themes', subject, 'push');
       this.setState({
         selectedSubject: subject,
+        acsKind: isAcs ? 'listening' : null,
+        acsPosition: null,
         config: {
           subject,
           theme: this.state.config?.theme ?? themes[0],
         },
       });
-      scrollToTop();
-      return;
-    }
-
-    if (action === 'acs-section-select') {
-      const kind = actionButton.dataset.kind;
-      if (!isAcsKind(kind)) return;
-      this.writeStep('acs-section', ACS_SUBJECT as Subject, 'push', { kind });
-      this.setState({ acsKind: kind, acsPosition: null });
       scrollToTop();
       return;
     }
@@ -963,17 +957,17 @@ export class QuizApp {
 
     if (action === 'acs-back') {
       // One step up through the browser history, so the button and the Back key always agree.
-      const step = this.currentStep();
-      if (step === 'acs-item' || step === 'acs-section') {
+      if (this.currentStep() === 'acs-item') {
         window.history.back();
       } else {
-        this.showStep('themes', ACS_SUBJECT as Subject);
+        this.showStep('acs-section', ACS_SUBJECT as Subject, { kind: 'listening', position: null });
       }
       return;
     }
 
     if (action === 'back-subjects') {
-      this.goBackSteps(this.currentStep() === 'themes' ? 1 : 0, 'subjects');
+      const step = this.currentStep();
+      this.goBackSteps(step === 'themes' || step === 'acs-section' ? 1 : 0, 'subjects');
       return;
     }
 

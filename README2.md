@@ -19,7 +19,7 @@ Create a local `.env` file based on `.env.example`:
 ## Supabase setup
 
 1. Create a new Supabase project.
-2. Run the migrations in `supabase/migrations/` in order, starting with `0001_initial.sql`. Theme names need `0006_theme_titles.sql`; saving them fails with a message if that table is missing. Mock exams need `0008_mock_exams.sql` (until it is run the admin can't save them and students simply see no mock exams), and `0009_mock_exam_questions.sql` to let a mock exam have its own questions. `0011_level5_and_theme_notes.sql` adds the Level 5 subject (Econometrics) and the per-theme "Notes From Lecture" links; `0012_management_accounting.sql` adds the Level 5 subject Management Accounting (MA); `0013_intermediate_microeconomics.sql` adds the Level 5 subject Intermediate Microeconomics (IM). `0014_acs_listening_argumentation.sql` adds the Academic Communication Skills content table and the public audio bucket (`acs-audio`). `0015_admin_speed.sql` adds the database functions that make the admin dashboard fast (the app still works without it, just slower). Run each once, in order; never re-run an older one after a newer one. Run `0010_restore_strict_is_admin.sql` too: it makes sure only real admins (the listed admin email, or an account with `app_metadata.role = 'admin'`) can write to the database.
+2. Run the migrations in `supabase/migrations/` in order, starting with `0001_initial.sql`. Theme names need `0006_theme_titles.sql`; saving them fails with a message if that table is missing. Mock exams need `0008_mock_exams.sql` (until it is run the admin can't save them and students simply see no mock exams), and `0009_mock_exam_questions.sql` to let a mock exam have its own questions. `0011_level5_and_theme_notes.sql` adds the Level 5 subject (Econometrics) and the per-theme "Notes From Lecture" links; `0012_management_accounting.sql` adds the Level 5 subject Management Accounting (MA); `0013_intermediate_microeconomics.sql` adds the Level 5 subject Intermediate Microeconomics (IM). `0014_acs_listening_argumentation.sql` adds the Academic Communication Skills content table and the public audio bucket (`acs-audio`). `0015_admin_speed.sql` adds the database functions that make the admin dashboard fast (the app still works without it, just slower). `0016_acs_listening_only.sql` merges the arguments into the listenings and removes the Argumentation Preparation section. Run each once, in order; never re-run an older one after a newer one. Run `0010_restore_strict_is_admin.sql` too: it makes sure only real admins (the listed admin email, or an account with `app_metadata.role = 'admin'`) can write to the database.
 3. Enable Anonymous Sign-Ins in Supabase Auth so public quiz sessions can store results under an auth user id.
 4. Create your admin email/password accounts in Supabase Auth.
 5. Keep public sign-ups disabled.
@@ -31,7 +31,7 @@ Create a local `.env` file based on `.env.example`:
 - `questions` stores the quiz content, answer options, and explanations.
 - `results` stores quiz attempts for the signed-in user id.
 - `theme_titles` stores the custom theme names set in the admin panel.
-- `acs_items` stores the Academic Communication Skills pages: 8 numbered items for each of two sections (Listening Preparation: a name and an audio file in the `acs-audio` storage bucket; Argumentation Preparation: a name and a list of arguments). Anyone can read them; only admins write them.
+- `acs_items` stores the Academic Communication Skills pages: the 8 numbered listenings of Listening Preparation (each has a name, an audio file in the `acs-audio` storage bucket, and an optional list of arguments). Anyone can read them; only admins write them.
 - `theme_notes` stores the optional https "Notes From Lecture" (Notion) link shown under each theme.
 - `mock_exams` stores the mock exams that sit between themes (title, position, optional source themes, question count). A mock exam always includes its own questions (`questions.mock_exam_id`) and fills any remaining slots evenly from its source themes, so no questions are duplicated.
 - RLS allows public reads on `questions`, anonymous/authenticated inserts on `results` only for the current user, and non-anonymous authenticated writes on `questions`.
@@ -53,9 +53,9 @@ The production output is the static `dist/` folder. Deploy that folder to Vercel
 
 ## Academic Communication Skills
 
-ACS has no themes. It opens two sections, **Listening Preparation** and **Argumentation Preparation**, each with 8 buttons ("Listening 1" to "Listening 8", plus an optional name). A listening opens an audio player with a note-taking area below it; an argumentation item shows its arguments with a note-taking area below. The student's notes are saved only on their own device (localStorage) and are never sent anywhere.
+ACS has no themes. It opens straight onto **Listening Preparation**: 8 buttons ("Listening 1" to "Listening 8", plus an optional name). A listening opens an audio player, then its arguments (if the admin added any), then a note-taking area. The student's notes are saved only on their own device (localStorage) and are never sent anywhere.
 
-Everything is edited in the admin panel under **ACS content**: the names, the audio (upload, replace, remove; MP3, M4A, WAV, OGG, AAC, FLAC or WebM up to 50 MB) and the arguments (add, reorder, remove). Code: `src/acsModel.ts` (rules), `src/acs.ts` (Supabase), `src/acsView.ts`, `src/audioPlayer.ts`, `src/acsNotes.ts` (student side), `src/admin/acsManager.ts` (admin side).
+Everything is edited in the admin panel under **ACS content**: the names, the audio (upload, replace, remove; MP3, M4A, WAV, OGG, AAC, FLAC or WebM up to 50 MB) and the arguments under each listening (add, reorder, remove). Code: `src/acsModel.ts` (rules), `src/acs.ts` (Supabase), `src/acsView.ts`, `src/audioPlayer.ts`, `src/acsNotes.ts` (student side), `src/admin/acsManager.ts` (admin side).
 
 ## Admin speed
 

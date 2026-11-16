@@ -103,7 +103,7 @@ async function saveRow(row: Record<string, unknown>, kind: AcsKind, position: nu
   return saved;
 }
 
-/** Saves the name (and, for an argumentation item, the arguments). Throws a readable Error when it did not save. */
+/** Saves the name and the arguments of a listening. Throws a readable Error when it did not save. */
 export async function saveAcsText(
   kind: AcsKind,
   position: number,
@@ -114,7 +114,7 @@ export async function saveAcsText(
     throw new Error(`${writeContext.failure} The name is longer than ${ACS_TITLE_MAX} characters.`);
   }
   const row: Record<string, unknown> = { title };
-  if (kind === 'argumentation' && fields.arguments) {
+  if (fields.arguments) {
     const prepared = prepareArgumentsForSave(fields.arguments);
     if (!prepared.ok) throw new Error(`${writeContext.failure} ${prepared.error}`);
     row.arguments = prepared.value;
