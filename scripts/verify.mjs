@@ -1234,7 +1234,8 @@ test('Smooth scrolling: mouse and trackpad only, with a watchdog and a kill swit
   assert.doesNotMatch(code, /syncTouch:\s*true/, 'phones and tablets keep the browser\'s own scrolling');
   assert.match(code, /\(hover: hover\) and \(pointer: fine\)/, 'only devices whose main input is a mouse or trackpad');
   assert.match(code, /prefers-reduced-motion/);
-  assert.match(code, /type === 'range'/, 'the audio seek bar keeps its own drag');
+  assert.match(code, /el\.tagName === 'TEXTAREA'\) \{\s*if \(el\.scrollHeight > el\.clientHeight \+ 1\) return true;/, 'a text box only takes the wheel when it has hidden text to scroll');
+  assert.doesNotMatch(code, /type === 'range'/, 'the seek bar does not interrupt page scrolling');
   assert.match(code, /watchSmoothing\(lenis\)/, 'the watchdog is started with the smoothing');
   assert.match(code, /failures >= 3/, 'it gives up after three dead wheel turns');
   assert.match(code, /lenis\.destroy\(\)/, 'and hands scrolling back to the browser completely');
