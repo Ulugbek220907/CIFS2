@@ -3205,14 +3205,8 @@ body:has(.theme-modal-backdrop) .admin-toast-container {
 }
 
 /* ==========================================================================
-   Fast loading: placeholders, "load more" footer, cheaper off-screen cards
+   Fast loading: placeholders and the "load more" footer
    ========================================================================== */
-/* Cards far below the screen are not laid out or painted until the admin scrolls near them. */
-.question-card-item {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 280px;
-}
-
 .question-feed-footer {
   min-height: 1px;
 }

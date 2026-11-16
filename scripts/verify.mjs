@@ -1229,10 +1229,16 @@ test('Migration 0015: admin functions run with the caller\'s rights, and only fo
   assert.match(sql, /pg_notify\('pgrst',\s*'reload schema'\)/i);
 });
 
-test('Smooth scrolling: phones and tablets get touch smoothing, older iOS and reduced motion do not', () => {
+test('Smooth scrolling: mouse and trackpad only, with a watchdog and a kill switch', () => {
   const code = fs.readFileSync('src/smoothScroll.ts', 'utf8');
-  assert.match(code, /syncTouch:\s*true/);
+  assert.doesNotMatch(code, /syncTouch:\s*true/, 'phones and tablets keep the browser\'s own scrolling');
+  assert.match(code, /\(hover: hover\) and \(pointer: fine\)/, 'only devices whose main input is a mouse or trackpad');
   assert.match(code, /prefers-reduced-motion/);
-  assert.match(code, /Number\(ios\[1\]\)\s*>=\s*16/);
   assert.match(code, /type === 'range'/, 'the audio seek bar keeps its own drag');
+  assert.match(code, /watchSmoothing\(lenis\)/, 'the watchdog is started with the smoothing');
+  assert.match(code, /failures >= 3/, 'it gives up after three dead wheel turns');
+  assert.match(code, /lenis\.destroy\(\)/, 'and hands scrolling back to the browser completely');
+  assert.match(code, /get\('smooth'\)/, '?smooth=off / ?smooth=on');
+  const css = fs.readFileSync('src/admin.css', 'utf8');
+  assert.doesNotMatch(css, /content-visibility/, 'no layout tricks that fight smooth scrolling');
 });
